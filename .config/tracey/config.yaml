@@ -1,8 +1,35 @@
 specs:
-  - name: main
+  - name: parser
     prefix: r
     include:
-      - docs/spec.md
+      - docs/002-parser-spec.md
+    impls:
+      - name: rust
+        include:
+          - "**/*.rs"
+
+  - name: schema
+    prefix: r
+    include:
+      - docs/003-schema-spec.md
+    impls:
+      - name: rust
+        include:
+          - "**/*.rs"
+
+  - name: deserializer
+    prefix: r
+    include:
+      - docs/004-deserializer-spec.md
+    impls:
+      - name: rust
+        include:
+          - "**/*.rs"
+
+  - name: diagnostics
+    prefix: r
+    include:
+      - docs/005-diagnostics-spec.md
     impls:
       - name: rust
         include:
