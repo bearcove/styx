@@ -2,10 +2,9 @@
 //!
 //! These types are deserialized from STYX schema files using facet-styx.
 //!
-//! NOTE: The current implementation is a simplified version. The full
-//! meta-schema uses structural polymorphism (a Schema can be a string,
-//! a tag, an object, etc.) which doesn't map directly to Rust enums.
-//! A production implementation would need custom deserialization logic.
+//! The meta-schema uses structural polymorphism - the shape of the data
+//! determines the type, not an explicit discriminator. We use `#[facet(untagged)]`
+//! to enable this kind of deserialization.
 
 use std::collections::HashMap;
 
@@ -30,7 +29,6 @@ pub struct SchemaFile {
     pub imports: Option<HashMap<String, String>>,
     /// Type definitions.
     /// Keys are type names as strings. The key "@" represents the document root.
-    /// (The meta-schema uses `@union(@string @unit)` but we normalize unit to "@")
     pub schema: HashMap<String, Schema>,
 }
 
@@ -50,111 +48,89 @@ pub struct Meta {
 /// In the meta-schema, Schema is defined as a union of:
 /// - A scalar string (literal value constraint)
 /// - A tag (type reference like @string, @MyType)
-/// - @Object (object schema)
-/// - @Sequence (sequence schema)
-/// - @Union (union type)
-/// - @Optional (optional field)
-/// - @Enum (enum type)
-/// - @Map (map type)
-/// - @Flatten (flatten directive)
+/// - An object (object schema)
+/// - A sequence (sequence schema)
+/// - Special tags like @union, @optional, @map, @enum, @flatten
 ///
-/// For facet deserialization, enum variants must match the tag names
-/// that appear in the data. Tags like `@string` become the scalar "string"
-/// which facet looks up as a variant name.
+/// For now, we use a simplified representation that matches what facet can deserialize.
+/// Tags like `@optional(@string)` become objects `{ optional: [@string] }`.
 #[derive(Facet, Debug, Clone)]
+#[facet(untagged)]
 #[repr(u8)]
 pub enum Schema {
-    // Built-in type references (common ones)
-    /// @string type reference
-    #[facet(rename = "string")]
-    String,
-    /// @boolean type reference
-    #[facet(rename = "boolean")]
-    Boolean,
-    /// @u8 type reference
-    #[facet(rename = "u8")]
-    U8,
-    /// @u16 type reference
-    #[facet(rename = "u16")]
-    U16,
-    /// @u32 type reference
-    #[facet(rename = "u32")]
-    U32,
-    /// @u64 type reference
-    #[facet(rename = "u64")]
-    U64,
-    /// @i8 type reference
-    #[facet(rename = "i8")]
-    I8,
-    /// @i16 type reference
-    #[facet(rename = "i16")]
-    I16,
-    /// @i32 type reference
-    #[facet(rename = "i32")]
-    I32,
-    /// @i64 type reference
-    #[facet(rename = "i64")]
-    I64,
-    /// @any type reference
-    #[facet(rename = "any")]
-    Any,
+    // Composite type constructors with payloads
+    // These are structs with a single field matching the tag name
+    /// Optional type: @optional(@T) → { optional: [@T] }
+    Optional(OptionalSchema),
+    /// Union type: @union(@A @B) → { union: [@A, @B] }
+    Union(UnionSchema),
+    /// Map type: @map(@K @V) → { map: [@K, @V] }
+    Map(MapSchema),
+    /// Flatten directive: @flatten(@T) → { flatten: [@T] }
+    Flatten(FlattenSchema),
+    /// Enum type: @enum{...} → { enum: {...} }
+    Enum(EnumTagSchema),
 
-    // Composite type constructors
-    /// Optional type: @optional(@T)
-    #[facet(rename = "optional")]
-    Optional(Vec<Schema>),
-    /// Union type: @union(@A @B ...)
-    #[facet(rename = "union")]
-    Union(Vec<Schema>),
-    /// Map type: @map(@V) or @map(@K @V)
-    #[facet(rename = "map")]
-    Map(Vec<Schema>),
-    /// Flatten directive: @flatten(@Type)
-    #[facet(rename = "flatten")]
-    Flatten(Vec<Schema>),
-    /// Enum type: @enum{...}
-    #[facet(rename = "enum")]
-    Enum(EnumSchema),
+    // Object schema - an object literal like { field @type }
+    /// Object schema with field definitions
+    Object(HashMap<String, Schema>),
+
+    // Sequence schema - a sequence literal like (@type)
+    /// Sequence schema
+    Sequence(Vec<Schema>),
+
+    // Type references (tags like @string, @MyType)
+    /// Type reference - any tag that doesn't match above patterns
+    TypeRef(String),
 }
 
-/// Object schema definition.
-///
-/// In the meta-schema this is: `Object @map(@union(@string @unit) @Schema)`
-/// We use String keys where "@" represents the additional fields schema.
+/// Optional type wrapper: @optional(@T)
 #[derive(Facet, Debug, Clone)]
-pub struct ObjectSchema {
-    /// All fields including the special "@" key for additional fields.
-    pub fields: HashMap<String, Schema>,
+pub struct OptionalSchema {
+    pub optional: Vec<Schema>,
 }
 
-impl ObjectSchema {
-    /// Get the schema for additional fields (the "@" key), if present.
-    pub fn additional_fields(&self) -> Option<&Schema> {
-        self.fields.get("@")
-    }
-
-    /// Get a named field's schema.
-    pub fn field(&self, name: &str) -> Option<&Schema> {
-        self.fields.get(name)
-    }
+/// Union type wrapper: @union(@A @B ...)
+#[derive(Facet, Debug, Clone)]
+pub struct UnionSchema {
+    pub union: Vec<Schema>,
 }
+
+/// Map type wrapper: @map(@K @V)
+#[derive(Facet, Debug, Clone)]
+pub struct MapSchema {
+    pub map: Vec<Schema>,
+}
+
+/// Flatten type wrapper: @flatten(@T)
+#[derive(Facet, Debug, Clone)]
+pub struct FlattenSchema {
+    pub flatten: Vec<Schema>,
+}
+
+/// Enum type wrapper: @enum{...}
+#[derive(Facet, Debug, Clone)]
+pub struct EnumTagSchema {
+    #[facet(rename = "enum")]
+    pub enum_variants: EnumSchema,
+}
+
+/// Helper type alias for object schemas.
+/// In the meta-schema this is: `Object @map(@union(@string @unit) @Schema)`
+pub type ObjectSchema = HashMap<String, Schema>;
 
 /// Enum schema definition.
-///
 /// In the meta-schema: `Enum @map(@string @union(@unit @Object))`
-#[derive(Facet, Debug, Clone)]
-pub struct EnumSchema {
-    /// Variant definitions.
-    /// Unit variants have no payload (value is unit), struct variants have an ObjectSchema.
-    pub variants: HashMap<String, EnumVariant>,
-}
+/// Maps variant names to their payload types (unit for no payload, object for struct variants).
+pub type EnumSchema = HashMap<String, EnumVariant>;
 
 /// An enum variant.
 #[derive(Facet, Debug, Clone)]
+#[facet(untagged)]
 #[repr(u8)]
 pub enum EnumVariant {
-    /// Unit variant (no payload).
-    Unit,
     /// Struct variant with fields.
     Struct(ObjectSchema),
+    /// Unit variant (no payload).
+    Unit,
 }

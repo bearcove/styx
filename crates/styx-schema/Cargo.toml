@@ -8,3 +8,6 @@ styx-parse = { path = "../styx-parse" }
 styx-tree = { path = "../styx-tree" }
 facet-styx = { path = "../facet-styx" }
 facet = "0.42"
+
+[dev-dependencies]
+facet-format = "0.42"

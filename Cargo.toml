@@ -8,3 +8,9 @@ members = [
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/bearcove/styx"
+
+[patch.crates-io]
+facet-format = { path = "../facet/facet-format" }
+facet-core = { path = "../facet/facet-core" }
+facet-reflect = { path = "../facet/facet-reflect" }
+facet = { path = "../facet/facet" }

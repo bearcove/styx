@@ -81,7 +81,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Meta-schema deserialization requires handling object schemas and custom type refs"]
     fn test_deserialize_meta_schema() {
         // Try to deserialize the meta-schema into our SchemaFile type
         // This currently fails because:
@@ -146,6 +145,119 @@ mod tests {
             Err(e) => {
                 eprintln!("Deserialization error: {e}");
                 panic!("Failed: {e}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_debug_events() {
+        use facet_format::FormatParser;
+        // Test with a subset of meta-schema that should work
+        let source = r#"
+meta {
+  id test
+  version 1.0
+}
+
+schema {
+  Meta {
+    id @string
+  }
+}
+"#;
+        let mut parser = facet_styx::StyxParser::new(source);
+        eprintln!("Parsing:\n{}", source);
+        eprintln!("---");
+        let mut count = 0;
+        loop {
+            match parser.next_event() {
+                Ok(Some(event)) => {
+                    eprintln!("Event {}: {:?}", count, event);
+                    count += 1;
+                }
+                Ok(None) => {
+                    eprintln!("Done after {} events", count);
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("Error after {} events: {:?}", count, e);
+                    panic!("Parser error: {e}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_nested_object_schema() {
+        // Test struct wrapper for tagged values
+        #[derive(facet::Facet, Debug)]
+        struct OptionalWrapper {
+            optional: Vec<String>,
+        }
+
+        #[derive(facet::Facet, Debug)]
+        struct Test {
+            value: OptionalWrapper,
+        }
+
+        // First test with explicit braces - this should work
+        let source = "value { optional (hello) }";
+        eprintln!("Testing explicit braces: {}", source);
+        let result: Result<Test, _> = facet_styx::from_str(source);
+        match result {
+            Ok(test) => {
+                eprintln!("Test deserialized: {:?}", test);
+            }
+            Err(e) => {
+                eprintln!("Test error: {e}");
+                panic!("Failed: {e}");
+            }
+        }
+
+        // Now test with tag syntax - should produce same events
+        let source2 = "value @optional(hello)";
+        eprintln!("\nTesting tag syntax: {}", source2);
+        let result2: Result<Test, _> = facet_styx::from_str(source2);
+        match result2 {
+            Ok(test) => {
+                eprintln!("Test deserialized: {:?}", test);
+            }
+            Err(e) => {
+                eprintln!("Test error: {e}");
+                panic!("Failed: {e}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_debug_at_object() {
+        use facet_format::FormatParser;
+        // Debug the @ { ... } construct
+        let source = r#"
+schema {
+  @ {
+    meta @Meta
+  }
+}
+"#;
+        let mut parser = facet_styx::StyxParser::new(source);
+        eprintln!("Parsing:\n{}", source);
+        eprintln!("---");
+        let mut count = 0;
+        loop {
+            match parser.next_event() {
+                Ok(Some(event)) => {
+                    eprintln!("Event {}: {:?}", count, event);
+                    count += 1;
+                }
+                Ok(None) => {
+                    eprintln!("Done after {} events", count);
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("Error after {} events: {:?}", count, e);
+                    panic!("Parser error: {e}");
+                }
             }
         }
     }
