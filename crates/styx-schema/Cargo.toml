@@ -1,0 +1,10 @@
+[package]
+name = "styx-schema"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+styx-parse = { path = "../styx-parse" }
+styx-tree = { path = "../styx-tree" }
+facet-styx = { path = "../facet-styx" }
+facet = "0.42"
