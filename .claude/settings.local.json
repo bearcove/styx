@@ -3,7 +3,8 @@
     "allow": [
       "Skill(gh-cli)",
       "mcp__acp__Write",
-      "mcp__acp__Edit"
+      "mcp__acp__Edit",
+      "mcp__acp__Bash"
     ]
   }
 }
