@@ -37,7 +37,7 @@ mod tests {
         let schema = result.unwrap();
         assert!(matches!(schema, Schema::Type { .. }));
         if let Schema::Type { name } = schema {
-            assert_eq!(name, "string");
+            assert_eq!(name, Some("string".into()));
         }
     }
 
@@ -60,8 +60,8 @@ mod tests {
         if let Schema::Enum(e) = schema {
             let ok_schema = e.0.get("ok").expect("should have 'ok' variant");
             assert!(
-                matches!(ok_schema, Schema::Type { name } if name == "unit"),
-                "ok should be Type {{ name: \"unit\" }}, got {:?}",
+                matches!(ok_schema, Schema::Type { name } if *name == Some("unit".into())),
+                "ok should be Type {{ name: Some(\"unit\") }}, got {:?}",
                 ok_schema
             );
         }

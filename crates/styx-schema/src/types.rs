@@ -64,10 +64,11 @@ pub enum Schema {
 
     /// Type reference (any tag with unit payload, e.g., @string, @MyType).
     /// This is the fallback for unknown tags.
+    /// `name` is `None` for unit tags (`@`), `Some("...")` for named tags.
     #[facet(other)]
     Type {
         #[facet(tag)]
-        name: String,
+        name: Option<String>,
     },
 }
 

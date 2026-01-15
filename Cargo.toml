@@ -20,6 +20,9 @@ facet-testhelpers = { git = "https://github.com/facet-rs/facet" }
 # Tracing
 tracing = "0.1"
 
+# Testing
+insta = "1"
+
 # Internal crates
 styx-parse = { path = "crates/styx-parse" }
 styx-format = { path = "crates/styx-format" }
