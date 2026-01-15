@@ -29,8 +29,8 @@ mod tests {
     /// Test deserializing a simple tagged enum variant
     #[test]
     fn test_seq_variant() {
-        // v @seq(...) should deserialize to Schema::Seq
-        let source = "v @seq(@seq())";
+        // v @seq(@string) should deserialize to Schema::Seq
+        let source = "v @seq(@string)";
         tracing::trace!(?source, "parsing");
         let result: Result<Doc, _> = facet_styx::from_str(source);
         tracing::trace!(?result, "parsed");
@@ -41,22 +41,22 @@ mod tests {
     /// Test that unknown tags fall back to the Type variant
     #[test]
     fn test_type_ref_fallback() {
-        // v @string should fall back to Schema::Type
-        let source = "v @string";
+        // v @MyCustomType should fall back to Schema::Type (unknown variant)
+        let source = "v @MyCustomType";
         tracing::trace!(?source, "parsing");
         let result: Result<Doc, _> = facet_styx::from_str(source);
         tracing::trace!(?result, "parsed");
         let doc = result.unwrap();
         assert!(matches!(doc.v, Schema::Type { .. }));
         if let Schema::Type { name } = doc.v {
-            assert_eq!(name, Some("string".into()));
+            assert_eq!(name, Some("MyCustomType".into()));
         }
     }
 
     /// Test deserializing an enum schema
     #[test]
     fn test_enum_schema() {
-        // An enum with two variants: one with type ref, one with object payload
+        // An enum with two variants: one unit type, one with object payload
         let source = "v @enum{ ok @unit error @object{message @string} }";
         tracing::trace!(?source, "parsing");
         let result: Result<Doc, _> = facet_styx::from_str(source);
@@ -71,9 +71,10 @@ mod tests {
         // Verify the inner types are captured correctly
         if let Schema::Enum(e) = doc.v {
             let ok_schema = e.0.get("ok").expect("should have 'ok' variant");
+            // Now @unit is a built-in type, not a Type fallback
             assert!(
-                matches!(ok_schema, Schema::Type { name } if *name == Some("unit".into())),
-                "ok should be Type {{ name: Some(\"unit\") }}, got {:?}",
+                matches!(ok_schema, Schema::Unit),
+                "ok should be Schema::Unit, got {:?}",
                 ok_schema
             );
         }

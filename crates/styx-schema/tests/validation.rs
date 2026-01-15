@@ -289,3 +289,148 @@ fn test_validate_meta_schema_against_itself() {
     // For now, just note if it fails - the meta-schema is complex
     // assert!(result.is_valid(), "meta-schema should validate against itself");
 }
+
+// =============================================================================
+// Constraint tests
+// =============================================================================
+
+#[test]
+fn test_validate_string_constraints_min_len() {
+    let schema = parse_schema(
+        r#"
+        meta { id test, version 1.0 }
+        schema { @ @object{ name @string{ minLen 3 } } }
+        "#,
+    );
+
+    // Valid: string length >= 3
+    let doc = parse_doc("name Alice");
+    let result = validate(&doc, &schema);
+    assert!(result.is_valid(), "errors: {:?}", result.errors);
+
+    // Invalid: string too short
+    let doc = parse_doc("name Al");
+    let result = validate(&doc, &schema);
+    assert!(!result.is_valid());
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| matches!(&e.kind, ValidationErrorKind::InvalidValue { .. }))
+    );
+}
+
+#[test]
+fn test_validate_string_constraints_max_len() {
+    let schema = parse_schema(
+        r#"
+        meta { id test, version 1.0 }
+        schema { @ @object{ code @string{ maxLen 5 } } }
+        "#,
+    );
+
+    // Valid: string length <= 5
+    let doc = parse_doc("code ABC");
+    let result = validate(&doc, &schema);
+    assert!(result.is_valid(), "errors: {:?}", result.errors);
+
+    // Invalid: string too long
+    let doc = parse_doc("code TOOLONG");
+    let result = validate(&doc, &schema);
+    assert!(!result.is_valid());
+}
+
+#[test]
+fn test_validate_int_constraints_min() {
+    let schema = parse_schema(
+        r#"
+        meta { id test, version 1.0 }
+        schema { @ @object{ age @int{ min 0 } } }
+        "#,
+    );
+
+    // Valid: age >= 0
+    let doc = parse_doc("age 25");
+    let result = validate(&doc, &schema);
+    assert!(result.is_valid(), "errors: {:?}", result.errors);
+
+    // Valid: age = 0 (boundary)
+    let doc = parse_doc("age 0");
+    let result = validate(&doc, &schema);
+    assert!(result.is_valid(), "errors: {:?}", result.errors);
+
+    // Invalid: negative age
+    let doc = parse_doc("age -5");
+    let result = validate(&doc, &schema);
+    assert!(!result.is_valid());
+}
+
+#[test]
+fn test_validate_int_constraints_max() {
+    let schema = parse_schema(
+        r#"
+        meta { id test, version 1.0 }
+        schema { @ @object{ percent @int{ max 100 } } }
+        "#,
+    );
+
+    // Valid: percent <= 100
+    let doc = parse_doc("percent 50");
+    let result = validate(&doc, &schema);
+    assert!(result.is_valid(), "errors: {:?}", result.errors);
+
+    // Invalid: percent > 100
+    let doc = parse_doc("percent 150");
+    let result = validate(&doc, &schema);
+    assert!(!result.is_valid());
+}
+
+#[test]
+fn test_validate_int_constraints_range() {
+    let schema = parse_schema(
+        r#"
+        meta { id test, version 1.0 }
+        schema { @ @object{ score @int{ min 0, max 100 } } }
+        "#,
+    );
+
+    // Valid: in range
+    let doc = parse_doc("score 75");
+    let result = validate(&doc, &schema);
+    assert!(result.is_valid(), "errors: {:?}", result.errors);
+
+    // Invalid: below min
+    let doc = parse_doc("score -10");
+    let result = validate(&doc, &schema);
+    assert!(!result.is_valid());
+
+    // Invalid: above max
+    let doc = parse_doc("score 200");
+    let result = validate(&doc, &schema);
+    assert!(!result.is_valid());
+}
+
+#[test]
+fn test_validate_float_constraints() {
+    let schema = parse_schema(
+        r#"
+        meta { id test, version 1.0 }
+        schema { @ @object{ rate @float{ min 0.0, max 1.0 } } }
+        "#,
+    );
+
+    // Valid: in range
+    let doc = parse_doc("rate 0.5");
+    let result = validate(&doc, &schema);
+    assert!(result.is_valid(), "errors: {:?}", result.errors);
+
+    // Valid: boundary
+    let doc = parse_doc("rate 0.0");
+    let result = validate(&doc, &schema);
+    assert!(result.is_valid(), "errors: {:?}", result.errors);
+
+    // Invalid: above max
+    let doc = parse_doc("rate 1.5");
+    let result = validate(&doc, &schema);
+    assert!(!result.is_valid());
+}

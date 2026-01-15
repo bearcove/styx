@@ -6,10 +6,14 @@ use std::collections::HashSet;
 
 use styx_tree::Value;
 
-use crate::error::{ValidationError, ValidationErrorKind, ValidationResult};
+use crate::error::{
+    ValidationError, ValidationErrorKind, ValidationResult, ValidationWarning,
+    ValidationWarningKind,
+};
 use crate::types::{
-    EnumSchema, FlattenSchema, MapSchema, ObjectSchema, OptionalSchema, Schema, SchemaFile,
-    SeqSchema, UnionSchema,
+    DefaultSchema, DeprecatedSchema, EnumSchema, FlattenSchema, FloatConstraints, IntConstraints,
+    MapSchema, ObjectSchema, OptionalSchema, Schema, SchemaFile, SeqSchema, StringConstraints,
+    UnionSchema,
 };
 
 /// Validator for Styx documents.
@@ -64,34 +68,235 @@ impl<'a> Validator<'a> {
     /// Validate a value against a schema.
     pub fn validate_value(&self, value: &Value, schema: &Schema, path: &str) -> ValidationResult {
         match schema {
-            Schema::Literal(expected) => self.validate_literal(value, expected, path),
-            Schema::Type { name } => self.validate_type_ref(value, name.as_deref(), path),
+            // Built-in scalar types
+            Schema::String(constraints) => self.validate_string(value, constraints.as_ref(), path),
+            Schema::Int(constraints) => self.validate_int(value, constraints.as_ref(), path),
+            Schema::Float(constraints) => self.validate_float(value, constraints.as_ref(), path),
+            Schema::Bool => self.validate_bool(value, path),
+            Schema::Unit => self.validate_unit(value, path),
+            Schema::Any => ValidationResult::ok(),
+
+            // Structural types
             Schema::Object(obj_schema) => self.validate_object(value, obj_schema, path),
             Schema::Seq(seq_schema) => self.validate_seq(value, seq_schema, path),
+            Schema::Map(map_schema) => self.validate_map(value, map_schema, path),
+
+            // Combinators
             Schema::Union(union_schema) => self.validate_union(value, union_schema, path),
             Schema::Optional(opt_schema) => self.validate_optional(value, opt_schema, path),
             Schema::Enum(enum_schema) => self.validate_enum(value, enum_schema, path),
-            Schema::Map(map_schema) => self.validate_map(value, map_schema, path),
             Schema::Flatten(flatten_schema) => self.validate_flatten(value, flatten_schema, path),
+
+            // Wrappers
+            Schema::Default(default_schema) => self.validate_default(value, default_schema, path),
+            Schema::Deprecated(deprecated_schema) => {
+                self.validate_deprecated(value, deprecated_schema, path)
+            }
+
+            // Other
+            Schema::Literal(expected) => self.validate_literal(value, expected, path),
+            Schema::Type { name } => self.validate_type_ref(value, name.as_deref(), path),
         }
     }
 
-    /// Validate a literal value.
-    fn validate_literal(&self, value: &Value, expected: &str, path: &str) -> ValidationResult {
+    // =========================================================================
+    // Built-in scalar types
+    // =========================================================================
+
+    fn validate_string(
+        &self,
+        value: &Value,
+        constraints: Option<&StringConstraints>,
+        path: &str,
+    ) -> ValidationResult {
+        let mut result = ValidationResult::ok();
+
+        let text = match value {
+            Value::Scalar(s) => &s.text,
+            _ => {
+                result.error(ValidationError::new(
+                    path,
+                    ValidationErrorKind::ExpectedScalar,
+                    format!("expected string, got {}", value_type_name(value)),
+                ));
+                return result;
+            }
+        };
+
+        // Apply constraints if present
+        if let Some(c) = constraints {
+            if let Some(min) = c.min_len {
+                if text.len() < min {
+                    result.error(ValidationError::new(
+                        path,
+                        ValidationErrorKind::InvalidValue {
+                            reason: format!("string length {} < minimum {}", text.len(), min),
+                        },
+                        format!("string too short (min length: {})", min),
+                    ));
+                }
+            }
+            if let Some(max) = c.max_len {
+                if text.len() > max {
+                    result.error(ValidationError::new(
+                        path,
+                        ValidationErrorKind::InvalidValue {
+                            reason: format!("string length {} > maximum {}", text.len(), max),
+                        },
+                        format!("string too long (max length: {})", max),
+                    ));
+                }
+            }
+            if let Some(pattern) = &c.pattern {
+                // TODO: compile and match regex
+                let _ = pattern; // Suppress unused warning for now
+            }
+        }
+
+        result
+    }
+
+    fn validate_int(
+        &self,
+        value: &Value,
+        constraints: Option<&IntConstraints>,
+        path: &str,
+    ) -> ValidationResult {
+        let mut result = ValidationResult::ok();
+
+        let parsed = match value {
+            Value::Scalar(s) => match s.text.parse::<i128>() {
+                Ok(n) => n,
+                Err(_) => {
+                    result.error(
+                        ValidationError::new(
+                            path,
+                            ValidationErrorKind::InvalidValue {
+                                reason: "not a valid integer".into(),
+                            },
+                            format!("'{}' is not a valid integer", s.text),
+                        )
+                        .with_span(s.span),
+                    );
+                    return result;
+                }
+            },
+            _ => {
+                result.error(ValidationError::new(
+                    path,
+                    ValidationErrorKind::ExpectedScalar,
+                    format!("expected integer, got {}", value_type_name(value)),
+                ));
+                return result;
+            }
+        };
+
+        // Apply constraints
+        if let Some(c) = constraints {
+            if let Some(min) = c.min {
+                if parsed < min {
+                    result.error(ValidationError::new(
+                        path,
+                        ValidationErrorKind::InvalidValue {
+                            reason: format!("value {} < minimum {}", parsed, min),
+                        },
+                        format!("value too small (min: {})", min),
+                    ));
+                }
+            }
+            if let Some(max) = c.max {
+                if parsed > max {
+                    result.error(ValidationError::new(
+                        path,
+                        ValidationErrorKind::InvalidValue {
+                            reason: format!("value {} > maximum {}", parsed, max),
+                        },
+                        format!("value too large (max: {})", max),
+                    ));
+                }
+            }
+        }
+
+        result
+    }
+
+    fn validate_float(
+        &self,
+        value: &Value,
+        constraints: Option<&FloatConstraints>,
+        path: &str,
+    ) -> ValidationResult {
+        let mut result = ValidationResult::ok();
+
+        let parsed = match value {
+            Value::Scalar(s) => match s.text.parse::<f64>() {
+                Ok(n) => n,
+                Err(_) => {
+                    result.error(
+                        ValidationError::new(
+                            path,
+                            ValidationErrorKind::InvalidValue {
+                                reason: "not a valid number".into(),
+                            },
+                            format!("'{}' is not a valid number", s.text),
+                        )
+                        .with_span(s.span),
+                    );
+                    return result;
+                }
+            },
+            _ => {
+                result.error(ValidationError::new(
+                    path,
+                    ValidationErrorKind::ExpectedScalar,
+                    format!("expected number, got {}", value_type_name(value)),
+                ));
+                return result;
+            }
+        };
+
+        // Apply constraints
+        if let Some(c) = constraints {
+            if let Some(min) = c.min {
+                if parsed < min {
+                    result.error(ValidationError::new(
+                        path,
+                        ValidationErrorKind::InvalidValue {
+                            reason: format!("value {} < minimum {}", parsed, min),
+                        },
+                        format!("value too small (min: {})", min),
+                    ));
+                }
+            }
+            if let Some(max) = c.max {
+                if parsed > max {
+                    result.error(ValidationError::new(
+                        path,
+                        ValidationErrorKind::InvalidValue {
+                            reason: format!("value {} > maximum {}", parsed, max),
+                        },
+                        format!("value too large (max: {})", max),
+                    ));
+                }
+            }
+        }
+
+        result
+    }
+
+    fn validate_bool(&self, value: &Value, path: &str) -> ValidationResult {
         let mut result = ValidationResult::ok();
 
         match value {
-            Value::Scalar(s) if s.text == expected => {
-                // Exact match
-            }
+            Value::Scalar(s) if s.text == "true" || s.text == "false" => {}
             Value::Scalar(s) => {
                 result.error(
                     ValidationError::new(
                         path,
                         ValidationErrorKind::InvalidValue {
-                            reason: format!("expected literal '{expected}', got '{}'", s.text),
+                            reason: "not a valid boolean".into(),
                         },
-                        format!("expected '{expected}', got '{}'", s.text),
+                        format!("'{}' is not a valid boolean (expected true/false)", s.text),
                     )
                     .with_span(s.span),
                 );
@@ -100,7 +305,7 @@ impl<'a> Validator<'a> {
                 result.error(ValidationError::new(
                     path,
                     ValidationErrorKind::ExpectedScalar,
-                    format!("expected literal '{expected}', got non-scalar"),
+                    format!("expected boolean, got {}", value_type_name(value)),
                 ));
             }
         }
@@ -108,154 +313,27 @@ impl<'a> Validator<'a> {
         result
     }
 
-    /// Validate a type reference.
-    fn validate_type_ref(
-        &self,
-        value: &Value,
-        type_name: Option<&str>,
-        path: &str,
-    ) -> ValidationResult {
+    fn validate_unit(&self, value: &Value, path: &str) -> ValidationResult {
         let mut result = ValidationResult::ok();
 
-        match type_name {
-            None => {
-                // Unit type reference (@) - value must be unit
-                if !value.is_unit() {
-                    result.error(ValidationError::new(
-                        path,
-                        ValidationErrorKind::TypeMismatch {
-                            expected: "unit".into(),
-                            got: value_type_name(value).into(),
-                        },
-                        "expected unit value",
-                    ));
-                }
-            }
-            Some("string") => {
-                // @string - any scalar
-                if !matches!(value, Value::Scalar(_)) {
-                    result.error(ValidationError::new(
-                        path,
-                        ValidationErrorKind::ExpectedScalar,
-                        format!("expected string, got {}", value_type_name(value)),
-                    ));
-                }
-            }
-            Some("int") | Some("integer") => {
-                // @int - scalar that parses as integer
-                match value {
-                    Value::Scalar(s) => {
-                        if s.text.parse::<i64>().is_err() {
-                            result.error(
-                                ValidationError::new(
-                                    path,
-                                    ValidationErrorKind::InvalidValue {
-                                        reason: "not a valid integer".into(),
-                                    },
-                                    format!("'{}' is not a valid integer", s.text),
-                                )
-                                .with_span(s.span),
-                            );
-                        }
-                    }
-                    _ => {
-                        result.error(ValidationError::new(
-                            path,
-                            ValidationErrorKind::ExpectedScalar,
-                            format!("expected integer, got {}", value_type_name(value)),
-                        ));
-                    }
-                }
-            }
-            Some("float") | Some("number") => {
-                // @float - scalar that parses as float
-                match value {
-                    Value::Scalar(s) => {
-                        if s.text.parse::<f64>().is_err() {
-                            result.error(
-                                ValidationError::new(
-                                    path,
-                                    ValidationErrorKind::InvalidValue {
-                                        reason: "not a valid number".into(),
-                                    },
-                                    format!("'{}' is not a valid number", s.text),
-                                )
-                                .with_span(s.span),
-                            );
-                        }
-                    }
-                    _ => {
-                        result.error(ValidationError::new(
-                            path,
-                            ValidationErrorKind::ExpectedScalar,
-                            format!("expected number, got {}", value_type_name(value)),
-                        ));
-                    }
-                }
-            }
-            Some("bool") | Some("boolean") => {
-                // @bool - scalar that is true/false
-                match value {
-                    Value::Scalar(s) => {
-                        if s.text != "true" && s.text != "false" {
-                            result.error(
-                                ValidationError::new(
-                                    path,
-                                    ValidationErrorKind::InvalidValue {
-                                        reason: "not a valid boolean".into(),
-                                    },
-                                    format!(
-                                        "'{}' is not a valid boolean (expected true/false)",
-                                        s.text
-                                    ),
-                                )
-                                .with_span(s.span),
-                            );
-                        }
-                    }
-                    _ => {
-                        result.error(ValidationError::new(
-                            path,
-                            ValidationErrorKind::ExpectedScalar,
-                            format!("expected boolean, got {}", value_type_name(value)),
-                        ));
-                    }
-                }
-            }
-            Some("unit") => {
-                // @unit - must be unit value
-                if !value.is_unit() {
-                    result.error(ValidationError::new(
-                        path,
-                        ValidationErrorKind::TypeMismatch {
-                            expected: "unit".into(),
-                            got: value_type_name(value).into(),
-                        },
-                        "expected unit value",
-                    ));
-                }
-            }
-            Some("any") => {
-                // @any - anything goes
-            }
-            Some(name) => {
-                // Named type reference - look up in schema
-                if let Some(type_schema) = self.schema_file.schema.get(name) {
-                    result.merge(self.validate_value(value, type_schema, path));
-                } else {
-                    result.error(ValidationError::new(
-                        path,
-                        ValidationErrorKind::UnknownType { name: name.into() },
-                        format!("unknown type '{name}'"),
-                    ));
-                }
-            }
+        if !value.is_unit() {
+            result.error(ValidationError::new(
+                path,
+                ValidationErrorKind::TypeMismatch {
+                    expected: "unit".into(),
+                    got: value_type_name(value).into(),
+                },
+                "expected unit value",
+            ));
         }
 
         result
     }
 
-    /// Validate an object schema.
+    // =========================================================================
+    // Structural types
+    // =========================================================================
+
     fn validate_object(
         &self,
         value: &Value,
@@ -276,13 +354,9 @@ impl<'a> Validator<'a> {
             }
         };
 
-        // Track which schema fields have been seen
         let mut seen_fields: HashSet<&str> = HashSet::new();
-
-        // Check for additional fields schema (key "@")
         let additional_schema = schema.0.get("@");
 
-        // Validate each field in the document
         for entry in &obj.entries {
             let key_str = match &entry.key {
                 Value::Scalar(s) => s.text.as_str(),
@@ -307,14 +381,11 @@ impl<'a> Validator<'a> {
 
             seen_fields.insert(key_str);
 
-            // Look up field in schema
             if let Some(field_schema) = schema.0.get(key_str) {
                 result.merge(self.validate_value(&entry.value, field_schema, &field_path));
             } else if let Some(add_schema) = additional_schema {
-                // Validate against additional fields schema
                 result.merge(self.validate_value(&entry.value, add_schema, &field_path));
             } else {
-                // Unknown field and no additional fields allowed
                 result.error(ValidationError::new(
                     &field_path,
                     ValidationErrorKind::UnknownField {
@@ -328,13 +399,12 @@ impl<'a> Validator<'a> {
         // Check for missing required fields
         for (field_name, field_schema) in &schema.0 {
             if field_name == "@" {
-                // Skip the additional fields marker
                 continue;
             }
 
             if !seen_fields.contains(field_name.as_str()) {
-                // Check if field is optional
-                if !matches!(field_schema, Schema::Optional(_)) {
+                // Optional and Default fields are not required
+                if !matches!(field_schema, Schema::Optional(_) | Schema::Default(_)) {
                     let field_path = if path.is_empty() {
                         field_name.clone()
                     } else {
@@ -354,7 +424,6 @@ impl<'a> Validator<'a> {
         result
     }
 
-    /// Validate a sequence schema.
     fn validate_seq(&self, value: &Value, schema: &SeqSchema, path: &str) -> ValidationResult {
         let mut result = ValidationResult::ok();
 
@@ -370,30 +439,83 @@ impl<'a> Validator<'a> {
             }
         };
 
-        // Schema should have exactly one element type
-        if schema.0.is_empty() {
-            result.error(ValidationError::new(
-                path,
-                ValidationErrorKind::SchemaError {
-                    reason: "seq schema must have element type".into(),
-                },
-                "invalid seq schema: missing element type",
-            ));
-            return result;
-        }
-
-        let element_schema = &schema.0[0];
-
-        // Validate each element
+        // Validate each element against the inner schema
+        let inner_schema = &schema.0.0;
         for (i, item) in seq.items.iter().enumerate() {
             let item_path = format!("{path}[{i}]");
-            result.merge(self.validate_value(item, element_schema, &item_path));
+            result.merge(self.validate_value(item, inner_schema, &item_path));
         }
 
         result
     }
 
-    /// Validate a union schema.
+    fn validate_map(&self, value: &Value, schema: &MapSchema, path: &str) -> ValidationResult {
+        let mut result = ValidationResult::ok();
+
+        let obj = match value {
+            Value::Object(o) => o,
+            _ => {
+                result.error(ValidationError::new(
+                    path,
+                    ValidationErrorKind::ExpectedObject,
+                    format!("expected map (object), got {}", value_type_name(value)),
+                ));
+                return result;
+            }
+        };
+
+        // @map(@V) has 1 element, @map(@K @V) has 2
+        let (key_schema, value_schema) = match schema.0.len() {
+            1 => (None, &schema.0[0]),
+            2 => (Some(&schema.0[0]), &schema.0[1]),
+            n => {
+                result.error(ValidationError::new(
+                    path,
+                    ValidationErrorKind::SchemaError {
+                        reason: format!("map schema must have 1 or 2 types, got {}", n),
+                    },
+                    "invalid map schema",
+                ));
+                return result;
+            }
+        };
+
+        for entry in &obj.entries {
+            let key_str = match &entry.key {
+                Value::Scalar(s) => s.text.as_str(),
+                _ => {
+                    result.error(ValidationError::new(
+                        path,
+                        ValidationErrorKind::InvalidValue {
+                            reason: "map keys must be scalars".into(),
+                        },
+                        "invalid map key",
+                    ));
+                    continue;
+                }
+            };
+
+            // Validate key if schema provided
+            if let Some(ks) = key_schema {
+                result.merge(self.validate_value(&entry.key, ks, path));
+            }
+
+            // Validate value
+            let entry_path = if path.is_empty() {
+                key_str.to_string()
+            } else {
+                format!("{path}.{key_str}")
+            };
+            result.merge(self.validate_value(&entry.value, value_schema, &entry_path));
+        }
+
+        result
+    }
+
+    // =========================================================================
+    // Combinators
+    // =========================================================================
+
     fn validate_union(&self, value: &Value, schema: &UnionSchema, path: &str) -> ValidationResult {
         let mut result = ValidationResult::ok();
 
@@ -408,7 +530,6 @@ impl<'a> Validator<'a> {
             return result;
         }
 
-        // Try each variant until one succeeds
         let mut tried = Vec::new();
         for variant in &schema.0 {
             let variant_result = self.validate_value(value, variant, path);
@@ -418,7 +539,6 @@ impl<'a> Validator<'a> {
             tried.push(schema_type_name(variant));
         }
 
-        // None matched
         result.error(ValidationError::new(
             path,
             ValidationErrorKind::UnionMismatch { tried },
@@ -436,7 +556,6 @@ impl<'a> Validator<'a> {
         result
     }
 
-    /// Validate an optional schema.
     fn validate_optional(
         &self,
         value: &Value,
@@ -444,23 +563,15 @@ impl<'a> Validator<'a> {
         path: &str,
     ) -> ValidationResult {
         // Optional always passes for present values - just validate the inner type
-        if schema.0.is_empty() {
-            return ValidationResult::ok();
-        }
-
-        self.validate_value(value, &schema.0[0], path)
+        self.validate_value(value, &schema.0.0, path)
     }
 
-    /// Validate an enum schema.
     fn validate_enum(&self, value: &Value, schema: &EnumSchema, path: &str) -> ValidationResult {
         let mut result = ValidationResult::ok();
 
-        // Value should be a tagged value
         let (tag, payload) = match value {
             Value::Tagged(t) => (t.tag.as_str(), t.payload.as_deref()),
             Value::Unit => {
-                // Unit can be a variant name if there's a unit variant in the enum
-                // This is a bit unusual - typically enums are @variant or @variant{...}
                 result.error(ValidationError::new(
                     path,
                     ValidationErrorKind::ExpectedTagged,
@@ -481,15 +592,16 @@ impl<'a> Validator<'a> {
             }
         };
 
-        // Look up the variant
         let expected_variants: Vec<String> = schema.0.keys().cloned().collect();
 
         match schema.0.get(tag) {
             Some(variant_schema) => {
-                // Validate the payload against the variant schema
                 match (payload, variant_schema) {
+                    (None, Schema::Unit) => {
+                        // @variant with unit schema - OK
+                    }
                     (None, Schema::Type { name: Some(n) }) if n == "unit" => {
-                        // @variant with unit payload schema - OK
+                        // @variant with @unit type ref - OK
                     }
                     (None, Schema::Type { name: None }) => {
                         // @variant with @ schema - OK (unit)
@@ -532,95 +644,120 @@ impl<'a> Validator<'a> {
         result
     }
 
-    /// Validate a map schema.
-    fn validate_map(&self, value: &Value, schema: &MapSchema, path: &str) -> ValidationResult {
-        let mut result = ValidationResult::ok();
-
-        let obj = match value {
-            Value::Object(o) => o,
-            _ => {
-                result.error(ValidationError::new(
-                    path,
-                    ValidationErrorKind::ExpectedObject,
-                    format!("expected map (object), got {}", value_type_name(value)),
-                ));
-                return result;
-            }
-        };
-
-        // Map schema has 1 element (value type) or 2 elements (key type, value type)
-        let (key_schema, value_schema) = match schema.0.len() {
-            1 => (None, &schema.0[0]),
-            2 => (Some(&schema.0[0]), &schema.0[1]),
-            _ => {
-                result.error(ValidationError::new(
-                    path,
-                    ValidationErrorKind::SchemaError {
-                        reason: "map schema must have 1 or 2 type arguments".into(),
-                    },
-                    "invalid map schema",
-                ));
-                return result;
-            }
-        };
-
-        // Validate each entry
-        for entry in &obj.entries {
-            let key_str = match &entry.key {
-                Value::Scalar(s) => s.text.as_str(),
-                _ => {
-                    result.error(ValidationError::new(
-                        path,
-                        ValidationErrorKind::InvalidValue {
-                            reason: "map keys must be scalars".into(),
-                        },
-                        "invalid map key",
-                    ));
-                    continue;
-                }
-            };
-
-            // Validate key if key schema specified
-            if let Some(ks) = key_schema {
-                result.merge(self.validate_value(&entry.key, ks, path));
-            }
-
-            // Validate value
-            let entry_path = if path.is_empty() {
-                key_str.to_string()
-            } else {
-                format!("{path}.{key_str}")
-            };
-            result.merge(self.validate_value(&entry.value, value_schema, &entry_path));
-        }
-
-        result
-    }
-
-    /// Validate a flatten schema.
     fn validate_flatten(
         &self,
         value: &Value,
         schema: &FlattenSchema,
         path: &str,
     ) -> ValidationResult {
+        // Flatten just validates against the inner type
+        self.validate_value(value, &schema.0.0, path)
+    }
+
+    // =========================================================================
+    // Wrappers
+    // =========================================================================
+
+    fn validate_default(
+        &self,
+        value: &Value,
+        schema: &DefaultSchema,
+        path: &str,
+    ) -> ValidationResult {
+        // Default just validates against the inner type
+        // (the default value is used at deserialization time, not validation time)
+        self.validate_value(value, &schema.0.1, path)
+    }
+
+    fn validate_deprecated(
+        &self,
+        value: &Value,
+        schema: &DeprecatedSchema,
+        path: &str,
+    ) -> ValidationResult {
+        let (reason, inner) = &schema.0;
+        let mut result = self.validate_value(value, inner, path);
+
+        // Add deprecation warning
+        result.warning(ValidationWarning::new(
+            path,
+            ValidationWarningKind::Deprecated {
+                reason: reason.clone(),
+            },
+            format!("deprecated: {}", reason),
+        ));
+
+        result
+    }
+
+    // =========================================================================
+    // Other
+    // =========================================================================
+
+    fn validate_literal(&self, value: &Value, expected: &str, path: &str) -> ValidationResult {
         let mut result = ValidationResult::ok();
 
-        // Flatten references another type - resolve and validate
-        // The schema is stored as a vec with the type reference
-        if schema.0.is_empty() {
-            result.error(ValidationError::new(
-                path,
-                ValidationErrorKind::SchemaError {
-                    reason: "flatten schema must reference a type".into(),
-                },
-                "invalid flatten schema",
-            ));
-            return result;
+        match value {
+            Value::Scalar(s) if s.text == expected => {}
+            Value::Scalar(s) => {
+                result.error(
+                    ValidationError::new(
+                        path,
+                        ValidationErrorKind::InvalidValue {
+                            reason: format!("expected literal '{expected}', got '{}'", s.text),
+                        },
+                        format!("expected '{expected}', got '{}'", s.text),
+                    )
+                    .with_span(s.span),
+                );
+            }
+            _ => {
+                result.error(ValidationError::new(
+                    path,
+                    ValidationErrorKind::ExpectedScalar,
+                    format!("expected literal '{expected}', got non-scalar"),
+                ));
+            }
         }
 
-        // Validate against the referenced type
-        result.merge(self.validate_value(value, &schema.0[0], path));
+        result
+    }
+
+    fn validate_type_ref(
+        &self,
+        value: &Value,
+        type_name: Option<&str>,
+        path: &str,
+    ) -> ValidationResult {
+        let mut result = ValidationResult::ok();
+
+        match type_name {
+            None => {
+                // Unit type reference (@)
+                if !value.is_unit() {
+                    result.error(ValidationError::new(
+                        path,
+                        ValidationErrorKind::TypeMismatch {
+                            expected: "unit".into(),
+                            got: value_type_name(value).into(),
+                        },
+                        "expected unit value",
+                    ));
+                }
+            }
+            Some(name) => {
+                // Named type reference - look up in schema
+                if let Some(type_schema) = self.schema_file.schema.get(name) {
+                    result.merge(self.validate_value(value, type_schema, path));
+                } else {
+                    result.error(ValidationError::new(
+                        path,
+                        ValidationErrorKind::UnknownType { name: name.into() },
+                        format!("unknown type '{name}'"),
+                    ));
+                }
+            }
+        }
 
         result
     }
@@ -640,16 +777,24 @@ fn value_type_name(value: &Value) -> &'static str {
 /// Get a human-readable name for a schema type.
 fn schema_type_name(schema: &Schema) -> String {
     match schema {
-        Schema::Literal(s) => format!("literal({s})"),
-        Schema::Type { name: None } => "unit".into(),
-        Schema::Type { name: Some(n) } => n.clone(),
+        Schema::String(_) => "string".into(),
+        Schema::Int(_) => "int".into(),
+        Schema::Float(_) => "float".into(),
+        Schema::Bool => "bool".into(),
+        Schema::Unit => "unit".into(),
+        Schema::Any => "any".into(),
         Schema::Object(_) => "object".into(),
         Schema::Seq(_) => "seq".into(),
+        Schema::Map(_) => "map".into(),
         Schema::Union(_) => "union".into(),
         Schema::Optional(_) => "optional".into(),
         Schema::Enum(_) => "enum".into(),
-        Schema::Map(_) => "map".into(),
         Schema::Flatten(_) => "flatten".into(),
+        Schema::Default(_) => "default".into(),
+        Schema::Deprecated(_) => "deprecated".into(),
+        Schema::Literal(s) => format!("literal({s})"),
+        Schema::Type { name: None } => "unit".into(),
+        Schema::Type { name: Some(n) } => n.clone(),
     }
 }
 

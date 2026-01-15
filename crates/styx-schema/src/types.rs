@@ -33,38 +33,76 @@ pub struct Meta {
 /// A type constraint (corresponds to Schema @enum{...} in the meta-schema).
 ///
 /// This is a tagged enum - each variant corresponds to a STYX tag like
-/// `@object`, `@seq`, `@union`, etc.
+/// `@string`, `@int`, `@object`, `@seq`, etc.
 #[derive(Facet, Debug, Clone)]
 #[facet(rename_all = "lowercase")]
 #[repr(u8)]
 pub enum Schema {
-    /// Literal value constraint (a scalar value that must match exactly).
-    Literal(String),
+    // =========================================================================
+    // Built-in scalar types with optional constraints
+    // =========================================================================
+    /// String type: @string or @string{minLen, maxLen, pattern}
+    String(Option<StringConstraints>),
 
-    /// Object schema: @object{field @type, @ @type}.
+    /// Integer type: @int or @int{min, max}
+    Int(Option<IntConstraints>),
+
+    /// Float type: @float or @float{min, max}
+    Float(Option<FloatConstraints>),
+
+    /// Boolean type: @bool (no constraints)
+    Bool,
+
+    /// Unit type: @unit (the value must be unit `@`)
+    Unit,
+
+    /// Any type: @any (accepts any value)
+    Any,
+
+    // =========================================================================
+    // Structural types
+    // =========================================================================
+    /// Object schema: @object{field @type, @ @type}
     Object(ObjectSchema),
 
-    /// Sequence schema: @seq(@type).
+    /// Sequence schema: @seq(@type)
     Seq(SeqSchema),
 
-    /// Union: @union(@A @B ...).
-    Union(UnionSchema),
-
-    /// Optional: @optional(@T).
-    Optional(OptionalSchema),
-
-    /// Enum: @enum{variant, variant @object{...}}.
-    Enum(EnumSchema),
-
-    /// Map: @map(@V) or @map(@K @V).
+    /// Map schema: @map(@V) or @map(@K @V)
     Map(MapSchema),
 
-    /// Flatten: @flatten(@Type).
+    // =========================================================================
+    // Combinators
+    // =========================================================================
+    /// Union: @union(@A @B ...)
+    Union(UnionSchema),
+
+    /// Optional: @optional(@T)
+    Optional(OptionalSchema),
+
+    /// Enum: @enum{variant @type, ...}
+    Enum(EnumSchema),
+
+    /// Flatten: @flatten(@Type) - inline fields from another type
     Flatten(FlattenSchema),
 
-    /// Type reference (any tag with unit payload, e.g., @string, @MyType).
-    /// This is the fallback for unknown tags.
-    /// `name` is `None` for unit tags (`@`), `Some("...")` for named tags.
+    // =========================================================================
+    // Wrappers / modifiers
+    // =========================================================================
+    /// Default value: @default(value @type)
+    Default(DefaultSchema),
+
+    /// Deprecated field: @deprecated("reason" @type)
+    Deprecated(DeprecatedSchema),
+
+    // =========================================================================
+    // Other
+    // =========================================================================
+    /// Literal value constraint (must match exactly)
+    Literal(String),
+
+    /// User-defined type reference (fallback for unknown tags)
+    /// e.g., @MyCustomType becomes Type { name: "MyCustomType" }
     #[facet(other)]
     Type {
         #[facet(tag)]
@@ -72,9 +110,47 @@ pub enum Schema {
     },
 }
 
+// =============================================================================
+// Constraint types
+// =============================================================================
+
+/// Constraints for @string type.
+#[derive(Facet, Debug, Clone, Default)]
+#[facet(rename_all = "camelCase")]
+pub struct StringConstraints {
+    /// Minimum length (inclusive).
+    pub min_len: Option<usize>,
+    /// Maximum length (inclusive).
+    pub max_len: Option<usize>,
+    /// Regex pattern the string must match.
+    pub pattern: Option<String>,
+}
+
+/// Constraints for @int type.
+#[derive(Facet, Debug, Clone, Default)]
+pub struct IntConstraints {
+    /// Minimum value (inclusive).
+    pub min: Option<i128>,
+    /// Maximum value (inclusive).
+    pub max: Option<i128>,
+}
+
+/// Constraints for @float type.
+#[derive(Facet, Debug, Clone, Default)]
+pub struct FloatConstraints {
+    /// Minimum value (inclusive).
+    pub min: Option<f64>,
+    /// Maximum value (inclusive).
+    pub max: Option<f64>,
+}
+
+// =============================================================================
+// Structural schema types
+// =============================================================================
+
 /// Object schema: @object{field @Schema, @ @Schema}.
 /// Maps field names to their type constraints.
-/// The key "@" (unit) represents additional fields.
+/// The key "@" represents additional fields (catch-all).
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
 pub struct ObjectSchema(pub HashMap<String, Schema>);
@@ -83,7 +159,17 @@ pub struct ObjectSchema(pub HashMap<String, Schema>);
 /// All elements must match the inner schema.
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
-pub struct SeqSchema(pub Vec<Schema>);
+pub struct SeqSchema(pub (Box<Schema>,));
+
+/// Map schema: @map(@V) or @map(@K @V).
+/// Vec contains 1 element (value type, key defaults to @string) or 2 elements (key, value).
+#[derive(Facet, Debug, Clone)]
+#[repr(transparent)]
+pub struct MapSchema(pub Vec<Schema>);
+
+// =============================================================================
+// Combinator schema types
+// =============================================================================
 
 /// Union schema: @union(@A @B ...).
 /// Value must match one of the listed types.
@@ -95,7 +181,7 @@ pub struct UnionSchema(pub Vec<Schema>);
 /// Field can be absent or match the inner type.
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
-pub struct OptionalSchema(pub Vec<Schema>);
+pub struct OptionalSchema(pub (Box<Schema>,));
 
 /// Enum schema: @enum{variant @Type, variant @object{...}}.
 /// Maps variant names to their payload schemas.
@@ -103,14 +189,26 @@ pub struct OptionalSchema(pub Vec<Schema>);
 #[repr(transparent)]
 pub struct EnumSchema(pub HashMap<String, Schema>);
 
-/// Map schema: @map(@V) or @map(@K @V).
-/// The sequence contains 1 element (value type) or 2 elements (key type, value type).
-#[derive(Facet, Debug, Clone)]
-#[repr(transparent)]
-pub struct MapSchema(pub Vec<Schema>);
-
 /// Flatten schema: @flatten(@Type).
-/// Inlines fields from another type.
+/// Inlines fields from another type into the containing object.
 #[derive(Facet, Debug, Clone)]
 #[repr(transparent)]
-pub struct FlattenSchema(pub Vec<Schema>);
+pub struct FlattenSchema(pub (Box<Schema>,));
+
+// =============================================================================
+// Wrapper schema types
+// =============================================================================
+
+/// Default value wrapper: @default(value @type).
+/// If the field is missing, use the default value.
+/// Tuple is (default_value, inner_schema).
+#[derive(Facet, Debug, Clone)]
+#[repr(transparent)]
+pub struct DefaultSchema(pub (String, Box<Schema>));
+
+/// Deprecated wrapper: @deprecated("reason" @type).
+/// Marks a field as deprecated; validation warns but doesn't fail.
+/// Tuple is (reason, inner_schema).
+#[derive(Facet, Debug, Clone)]
+#[repr(transparent)]
+pub struct DeprecatedSchema(pub (String, Box<Schema>));
