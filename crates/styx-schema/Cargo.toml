@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 styx-parse.workspace = true
 styx-tree.workspace = true
+styx-format.workspace = true
 facet-styx.workspace = true
 facet.workspace = true
 
@@ -16,6 +17,7 @@ tracing = { workspace = true, optional = true }
 facet-format = { workspace = true, features = ["tracing"] }
 tracing.workspace = true
 facet-testhelpers.workspace = true
+insta = "1"
 
 [features]
 tracing = ["dep:tracing", "facet-styx/tracing"]

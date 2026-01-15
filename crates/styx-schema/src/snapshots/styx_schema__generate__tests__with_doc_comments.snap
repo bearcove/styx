@@ -1,0 +1,10 @@
+---
+source: crates/styx-schema/src/generate.rs
+expression: schema
+---
+    ///  A user in the system.
+    User @object{
+        ///  The user's full name.
+        name @string
+        ///  Age in years.
+        age @int}

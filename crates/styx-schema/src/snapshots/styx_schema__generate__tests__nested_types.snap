@@ -1,0 +1,6 @@
+---
+source: crates/styx-schema/src/generate.rs
+expression: schema
+---
+Inner @object{value @int}
+    Outer @object{inner @Inner, name @string}

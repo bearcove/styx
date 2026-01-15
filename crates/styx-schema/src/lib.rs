@@ -4,11 +4,13 @@
 //! deserializing it with facet-styx to validate the implementation.
 
 pub mod error;
+pub mod generate;
 pub mod meta;
 pub mod types;
 pub mod validate;
 
 pub use error::{ValidationError, ValidationErrorKind, ValidationResult, ValidationWarning};
+pub use generate::{StyxSchemaGenerator, to_styx_schema};
 pub use meta::META_SCHEMA_SOURCE;
 pub use types::*;
 pub use validate::{Validator, validate, validate_as};
