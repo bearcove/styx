@@ -12,9 +12,10 @@ pub use types::*;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use facet_testhelpers::test;
 
     /// Test deserializing a simple tagged enum variant
-    #[test_log::test]
+    #[test]
     fn test_seq_variant() {
         // @seq(...) should deserialize to Schema::Seq
         let source = "@seq(@seq())";
@@ -26,7 +27,7 @@ mod tests {
     }
 
     /// Test that unknown tags fall back to the Type variant
-    #[test_log::test]
+    #[test]
     fn test_type_ref_fallback() {
         // @string should fall back to Schema::Type
         let source = "@string";
@@ -41,7 +42,7 @@ mod tests {
     }
 
     /// Test deserializing an enum schema
-    #[test_log::test]
+    #[test]
     fn test_enum_schema() {
         // An enum with two variants: one with type ref, one with object payload
         let source = "@enum{ ok @unit error @object{message @string} }";
@@ -67,7 +68,7 @@ mod tests {
     }
 
     /// Test deserializing the full meta-schema
-    #[test_log::test]
+    #[test]
     fn test_deserialize_meta_schema() {
         tracing::trace!(source = META_SCHEMA_SOURCE, "parsing meta-schema");
         let result: Result<SchemaFile, _> = facet_styx::from_str(META_SCHEMA_SOURCE);

@@ -9,6 +9,23 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/bearcove/styx"
 
+[workspace.dependencies]
+# Facet crates
+facet = "0.42"
+facet-core = "0.42"
+facet-format = "0.42"
+facet-reflect = "0.42"
+facet-testhelpers = { git = "https://github.com/facet-rs/facet" }
+
+# Tracing
+tracing = "0.1"
+
+# Internal crates
+styx-parse = { path = "crates/styx-parse" }
+styx-format = { path = "crates/styx-format" }
+styx-tree = { path = "crates/styx-tree" }
+facet-styx = { path = "crates/facet-styx" }
+
 [patch.crates-io]
 facet-format = { path = "../facet/facet-format" }
 facet-core = { path = "../facet/facet-core" }
