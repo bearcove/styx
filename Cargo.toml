@@ -3,6 +3,9 @@ resolver = "3"
 members = [
     "crates/*",
 ]
+exclude = [
+    "editors/zed-styx",
+]
 
 [workspace.package]
 edition = "2024"
