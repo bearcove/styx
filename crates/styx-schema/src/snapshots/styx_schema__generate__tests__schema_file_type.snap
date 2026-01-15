@@ -13,6 +13,7 @@ expression: schema
     /// Keys are type names as strings. The key "@" represents the document root.
     schema @map(@Schema)
 }
+
 /// Constraints for @float type.
 FloatConstraints @object{
     /// Minimum value (inclusive).
@@ -20,6 +21,7 @@ FloatConstraints @object{
     /// Maximum value (inclusive).
     max @optional(@float)
 }
+
 /// Constraints for @int type.
 IntConstraints @object{
     /// Minimum value (inclusive).
@@ -27,6 +29,7 @@ IntConstraints @object{
     /// Maximum value (inclusive).
     max @optional(@int)
 }
+
 /// Schema metadata.
 Meta @object{
     /// Unique identifier for the schema (URL recommended).
@@ -36,6 +39,7 @@ Meta @object{
     /// Human-readable description.
     description @optional(@string)
 }
+
 /// A type constraint (corresponds to Schema @enum{...} in the meta-schema).
 /// 
 /// This is a tagged enum - each variant corresponds to a STYX tag like
@@ -77,6 +81,7 @@ Schema @enum{
     /// e.g., @MyCustomType becomes Type { name: "MyCustomType" }
     type @object{name @optional(@string)}
 }
+
 /// Constraints for @string type.
 StringConstraints @object{
     /// Minimum length (inclusive).
