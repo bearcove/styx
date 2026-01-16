@@ -27,7 +27,7 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
 
-  compliance:
+  compliance-rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -46,3 +46,30 @@ jobs:
 
       - name: Compare with golden
         run: diff -u compliance/golden.sexp output.sexp
+
+  compliance-js:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bindings/styx-js
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: bindings/styx-js/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run compliance suite
+        run: node dist/compliance.js ../../compliance/corpus > output.sexp
+
+      - name: Compare with golden
+        run: diff -u ../../compliance/golden.sexp output.sexp
