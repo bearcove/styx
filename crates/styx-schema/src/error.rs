@@ -110,6 +110,54 @@ impl ValidationError {
         self
     }
 
+    /// Get quickfix data for LSP code actions.
+    /// Returns JSON data that can be used to offer quick fixes.
+    pub fn quickfix_data(&self) -> Option<serde_json::Value> {
+        match &self.kind {
+            ValidationErrorKind::UnknownField {
+                field, suggestion, ..
+            } => {
+                if let Some(suggestion) = suggestion {
+                    Some(serde_json::json!({
+                        "type": "rename_field",
+                        "from": field,
+                        "to": suggestion
+                    }))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Get a rich diagnostic message suitable for LSP.
+    pub fn diagnostic_message(&self) -> String {
+        match &self.kind {
+            ValidationErrorKind::UnknownField {
+                field,
+                valid_fields,
+                suggestion,
+            } => {
+                let mut msg = format!("unknown field '{}'", field);
+                if let Some(suggestion) = suggestion {
+                    msg.push_str(&format!(" — did you mean '{}'?", suggestion));
+                }
+                if !valid_fields.is_empty() && valid_fields.len() <= 10 {
+                    msg.push_str(&format!("\nvalid: {}", valid_fields.join(", ")));
+                }
+                msg
+            }
+            ValidationErrorKind::MissingField { field } => {
+                format!("missing required field '{}'", field)
+            }
+            ValidationErrorKind::TypeMismatch { expected, got } => {
+                format!("type mismatch: expected {}, got {}", expected, got)
+            }
+            _ => self.message.clone(),
+        }
+    }
+
     /// Render this error with ariadne.
     pub fn render(&self, filename: &str, source: &str) -> String {
         let mut output = Vec::new();
