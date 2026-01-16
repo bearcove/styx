@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Build
+        run: cargo build --all-targets
+
+      - name: Run tests
+        run: cargo test --all-targets
+
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  compliance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Build styx CLI
+        run: cargo build --release --bin styx
+
+      - name: Run compliance suite
+        run: |
+          find compliance/corpus -name "*.styx" | sort | while read f; do
+            ./target/release/styx @tree --format sexp "$f"
+          done > output.sexp
+
+      - name: Compare with golden
+        run: diff -u compliance/golden.sexp output.sexp
