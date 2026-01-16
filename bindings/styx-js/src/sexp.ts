@@ -87,10 +87,7 @@ function valueToSexp(value: Value, level: number): string {
   return `${pad}(unit ${span})`;
 }
 
-function payloadToSexp(
-  payload: Scalar | Sequence | StyxObject,
-  level: number
-): string {
+function payloadToSexp(payload: Scalar | Sequence | StyxObject, level: number): string {
   const pad = indent(level);
 
   if (payload.type === "scalar") {
@@ -134,6 +131,7 @@ function payloadToSexp(
 }
 
 export function errorToSexp(message: string, span: Span): string {
-  const msg = jsonEscape(message);
+  const fullMsg = `parse error at ${span.start}-${span.end}: ${message}`;
+  const msg = jsonEscape(fullMsg);
   return `(error [${span.start}, ${span.end}] "${msg}")`;
 }

@@ -185,7 +185,8 @@ export class Parser {
   }
 
   private parseObject(): StyxObject {
-    const start = this.expect("lbrace").span.start;
+    const openBrace = this.expect("lbrace");
+    const start = openBrace.span.start;
     const entries: Entry[] = [];
     let separator: Separator | null = null; // null = not yet determined
 
@@ -227,10 +228,7 @@ export class Parser {
     }
 
     if (this.check("eof")) {
-      throw new ParseError("unclosed object (missing `}`)", {
-        start,
-        end: this.current.span.start,
-      });
+      throw new ParseError("unclosed object (missing `}`)", openBrace.span);
     }
 
     const end = this.expect("rbrace").span.end;
@@ -243,7 +241,8 @@ export class Parser {
   }
 
   private parseSequence(): Sequence {
-    const start = this.expect("lparen").span.start;
+    const openParen = this.expect("lparen");
+    const start = openParen.span.start;
     const items: Value[] = [];
 
     while (!this.check("rparen", "eof")) {
@@ -251,10 +250,7 @@ export class Parser {
     }
 
     if (this.check("eof")) {
-      throw new ParseError("unclosed sequence (missing `)`)", {
-        start,
-        end: this.current.span.start,
-      });
+      throw new ParseError("unclosed sequence (missing `)`)", openParen.span);
     }
 
     const end = this.expect("rparen").span.end;

@@ -278,15 +278,43 @@ export class Lexer {
             // Unknown escape - keep as-is for now
             text += "\\" + escaped;
         }
-      } else if (ch === "\n" || ch === "\r") {
-        // Unclosed string at newline
-        throw new ParseError("unclosed string", { start, end: this.bytePos });
+      } else if (ch === "\n") {
+        // Unclosed string at newline - recover by including the raw content
+        // Include the opening quote in text to match Rust behavior
+        this.advance(); // consume newline
+        return {
+          type: "quoted",
+          text: '"' + text + "\n",
+          span: { start, end: this.bytePos },
+          hadWhitespaceBefore: hadWhitespace,
+          hadNewlineBefore: hadNewline,
+        };
+      } else if (ch === "\r") {
+        // Handle \r\n
+        this.advance();
+        if (this.peek() === "\n") {
+          this.advance();
+        }
+        return {
+          type: "quoted",
+          text: '"' + text + "\n",
+          span: { start, end: this.bytePos },
+          hadWhitespaceBefore: hadWhitespace,
+          hadNewlineBefore: hadNewline,
+        };
       } else {
         text += this.advance();
       }
     }
 
-    throw new ParseError("unclosed string", { start, end: this.bytePos });
+    // EOF - recover by including the raw content
+    return {
+      type: "quoted",
+      text: '"' + text,
+      span: { start, end: this.bytePos },
+      hadWhitespaceBefore: hadWhitespace,
+      hadNewlineBefore: hadNewline,
+    };
   }
 
   private readUnicodeEscape(): string {
@@ -351,7 +379,12 @@ export class Lexer {
     while (this.pos < this.source.length && this.peek() !== "\n") {
       delimiter += this.advance();
     }
-    this.advance(); // newline
+    if (this.pos < this.source.length) {
+      this.advance(); // newline
+    }
+
+    // Track opener span (<<DELIM\n) for error reporting
+    const openerEnd = this.bytePos;
 
     // Read content until delimiter on its own line
     let text = "";
@@ -387,14 +420,14 @@ export class Lexer {
       }
     }
 
-    // Heredoc without closing delimiter - return what we have
+    // Heredoc without closing delimiter - use opener span only
     if (delimiter.includes(",")) {
       text = delimiter.slice(delimiter.split(",")[0].length) + "\n" + text;
     }
     return {
       type: "heredoc",
       text,
-      span: { start, end: this.bytePos },
+      span: { start, end: openerEnd },
       hadWhitespaceBefore: hadWhitespace,
       hadNewlineBefore: hadNewline,
     };
