@@ -11,7 +11,7 @@ expression: schema
     imports @optional(@string)
     /// Type definitions.
     /// Keys are type names (Some) or unit (None) for the document root.
-    schema @map(@optional (@string) @Schema)
+    schema @map(@optional(@string) @Schema)
 }
 
 /// Constraints for @float type.
@@ -58,7 +58,7 @@ Schema @enum{
     /// Any type: @any (accepts any value)
     any @unit
     /// Object schema: @object{field @type, @ @type}
-    object @map(@optional (@string) @Schema)
+    object @map(@optional(@string) @Schema)
     /// Sequence schema: @seq(@type)
     seq @Schema
     /// Map schema: @map(@V) or @map(@K @V)
