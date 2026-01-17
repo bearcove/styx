@@ -5,3 +5,7 @@ output: docs/public
 
 stable_assets:
   - "docs/static/favicon.svg favicon.svg"
+
+syntax_highlight:
+  light_theme: github-light
+  dark_theme: catppuccin-mocha
