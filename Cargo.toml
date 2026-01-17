@@ -44,8 +44,8 @@ styx-lsp = { path = "crates/styx-lsp" }
 facet-styx = { path = "crates/facet-styx" }
 
 [patch.crates-io]
-facet = { path = "../facet/facet" }
-facet-args = { path = "../facet/facet-args" }
-facet-core = { path = "../facet/facet-core" }
-facet-format = { path = "../facet/facet-format" }
-facet-reflect = { path = "../facet/facet-reflect" }
+facet = { git = "https://github.com/facet-rs/facet" }
+facet-args = { git = "https://github.com/facet-rs/facet" }
+facet-core = { git = "https://github.com/facet-rs/facet" }
+facet-format = { git = "https://github.com/facet-rs/facet" }
+facet-reflect = { git = "https://github.com/facet-rs/facet" }
