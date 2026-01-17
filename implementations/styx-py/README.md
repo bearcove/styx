@@ -39,8 +39,22 @@ uv run pytest
 uv run ruff check .
 
 # Run type checker
-uv run mypy styx
+uv run ty check styx
 ```
+
+## Publishing to PyPI
+
+To publish a new version:
+
+```bash
+# Build the package
+uv build
+
+# Upload to PyPI (requires PYPI_API_TOKEN)
+uv publish --token $PYPI_API_TOKEN
+```
+
+For CI/CD, add `PYPI_API_TOKEN` as a repository secret and create a workflow that triggers on version tags.
 
 ## License
 

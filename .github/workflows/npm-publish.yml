@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: bindings/styx-js
+        working-directory: implementations/styx-js
     steps:
       - uses: actions/checkout@v5
 
@@ -20,7 +20,7 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
-          cache-dependency-path: bindings/styx-js/package-lock.json
+          cache-dependency-path: implementations/styx-js/package-lock.json
 
       - name: Install dependencies
         run: npm ci

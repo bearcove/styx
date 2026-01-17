@@ -90,7 +90,7 @@ jobs:
     runs-on: depot-ubuntu-24.04-4
     defaults:
       run:
-        working-directory: bindings/styx-js
+        working-directory: implementations/styx-js
     steps:
       - uses: actions/checkout@v4
 
@@ -99,7 +99,7 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: bindings/styx-js/package-lock.json
+          cache-dependency-path: implementations/styx-js/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -118,7 +118,7 @@ jobs:
     runs-on: depot-ubuntu-24.04-4
     defaults:
       run:
-        working-directory: bindings/styx-py
+        working-directory: implementations/styx-py
     steps:
       - uses: actions/checkout@v4
 
@@ -145,7 +145,7 @@ jobs:
     runs-on: depot-ubuntu-24.04-4
     defaults:
       run:
-        working-directory: bindings/styx-py
+        working-directory: implementations/styx-py
     steps:
       - uses: actions/checkout@v4
 
