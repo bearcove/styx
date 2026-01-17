@@ -133,6 +133,7 @@
             <div id="editor"><div class="loading">Loading Monaco editor...</div></div>
         </div>
         <div id="diagnostics" class="diagnostics"></div>
+        <div id="vim-status" style="padding: 0.3rem 1rem; background: #21252b; border-top: 1px solid #3e4451; font-family: monospace; font-size: 0.75rem; color: #abb2bf; min-height: 1.2em;"></div>
     </div>
 
     <div class="output-pane">
@@ -150,15 +151,25 @@
 window.STYX_WASM_URL = '/wasm/styx_wasm_bg.wasm';
 </script>
 <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/loader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/monaco-vim@0.4.1/dist/monaco-vim.min.js"></script>
 <script type="module">
 // Import Styx WASM
 import init, { to_json, from_json, parse, version } from '/wasm/styx_wasm.js';
 
-// Wait for Monaco to load
+// Wait for Monaco and MonacoVim to load
 const monacoPromise = new Promise((resolve) => {
-    require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' } });
-    require(['vs/editor/editor.main'], resolve);
+    require.config({
+        paths: {
+            vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs',
+            'monaco-vim': 'https://cdn.jsdelivr.net/npm/monaco-vim@0.4.1/dist/monaco-vim'
+        }
+    });
+    require(['vs/editor/editor.main'], () => {
+        // Load monaco-vim after Monaco is ready
+        require(['monaco-vim'], (MonacoVim) => {
+            window.MonacoVim = MonacoVim;
+            resolve();
+        });
+    });
 });
 
 // Styx Monarch grammar definition
@@ -172,96 +183,86 @@ const styxLanguage = {
     ],
 
     tokenizer: {
-        // Start in key position (beginning of line/entry)
+        // Simpler line-based approach: first word is key, rest are values
         root: [
+            // Whitespace
             [/[ \t]+/, 'white'],
-            [/\r?\n/, 'white'],
+
+            // Newline resets to key position
+            [/\r?\n/, { token: 'white', next: '@root' }],
+
+            // Comments
             [/\/\/\/.*$/, 'comment.doc'],
             [/\/\/.*$/, 'comment'],
-            // After seeing a key, switch to value mode
-            [/@[A-Za-z_][A-Za-z0-9_\-]*/, { token: 'tag', next: '@value' }],
-            [/@(?![A-Za-z_])/, { token: 'tag', next: '@value' }],
-            [/r(#*)"/, { token: 'string.key.begin', next: '@rawStringKey.$1' }],
-            [/"/, { token: 'string.key.begin', next: '@stringKey' }],
-            [/[{}]/, '@brackets'],
-            [/\(/, { token: 'delimiter.parenthesis', next: '@sequence' }],
+
+            // Tags at start of line (key position)
+            [/@[A-Za-z_][A-Za-z0-9_\-]*/, { token: 'tag', next: '@afterKey' }],
+            [/@(?![A-Za-z_])/, { token: 'tag', next: '@afterKey' }],
+
+            // Strings as keys
+            [/r#*"/, { token: 'string.key', next: '@rawString' }],
+            [/"/, { token: 'string.key', next: '@stringKey' }],
+
+            // Delimiters
+            [/\{/, 'delimiter.curly'],
+            [/\}/, 'delimiter.curly'],
+            [/\(/, 'delimiter.parenthesis'],
+            [/\)/, 'delimiter.parenthesis'],
             [/,/, 'delimiter.comma'],
-            [/[^\s{}\(\),"=@<>\r\n]+/, { token: 'key', next: '@value' }],
+
+            // Bare key - transition to value mode
+            [/[^\s{}\(\),"=@<>\r\n]+/, { token: 'key', next: '@afterKey' }],
         ],
 
-        // Value position (after key)
-        value: [
+        // After a key, everything until newline is value
+        afterKey: [
             [/[ \t]+/, 'white'],
-            [/\r?\n/, { token: 'white', next: '@pop' }],
-            [/\/\/.*$/, { token: 'comment', next: '@pop' }],
-            [/@[A-Za-z_][A-Za-z0-9_\-]*/, 'tag'],
-            [/@(?![A-Za-z_])/, 'tag'],
-            [/r(#*)"/, { token: 'string.begin', next: '@rawString.$1' }],
-            [/<<([A-Z][A-Z0-9_]*)(,[a-z]+)?/, { token: 'string.heredoc.begin', next: '@heredoc.$1' }],
-            [/"/, { token: 'string.begin', next: '@string' }],
-            [/\{/, { token: 'delimiter.curly', next: '@root' }],
-            [/\}/, { token: 'delimiter.curly', next: '@pop' }],
-            [/\(/, { token: 'delimiter.parenthesis', next: '@sequence' }],
-            [/,/, { token: 'delimiter.comma', next: '@pop' }],
-            [/[^\s{}\(\),"=@>\r\n]+>[^\s{}\(\),"\r\n]+/, 'attribute'],
-            [/[^\s{}\(\),"=@<>\r\n]+/, 'value'],
-        ],
-
-        // Inside a sequence - all items are values
-        sequence: [
-            [/[ \t\r\n]+/, 'white'],
-            [/\/\/\/.*$/, 'comment.doc'],
+            [/\r?\n/, { token: 'white', next: '@root' }],
             [/\/\/.*$/, 'comment'],
+
+            // Tags in value position
             [/@[A-Za-z_][A-Za-z0-9_\-]*/, 'tag'],
             [/@(?![A-Za-z_])/, 'tag'],
-            [/r(#*)"/, { token: 'string.begin', next: '@rawString.$1' }],
-            [/"/, { token: 'string.begin', next: '@string' }],
-            [/\{/, { token: 'delimiter.curly', next: '@root' }],
-            [/\(/, { token: 'delimiter.parenthesis', next: '@sequence' }],
-            [/\)/, { token: 'delimiter.parenthesis', next: '@pop' }],
+
+            // Strings
+            [/r#*"/, { token: 'string', next: '@rawString' }],
+            [/<<[A-Z][A-Z0-9_]*(,[a-z]+)?/, { token: 'string.heredoc', next: '@heredoc' }],
+            [/"/, { token: 'string', next: '@string' }],
+
+            // Nested structures - stay in afterKey
+            [/\{/, 'delimiter.curly'],
+            [/\}/, 'delimiter.curly'],
+            [/\(/, 'delimiter.parenthesis'],
+            [/\)/, 'delimiter.parenthesis'],
+            [/,/, 'delimiter.comma'],
+
+            // Attributes
+            [/[^\s{}\(\),"=@>\r\n]+>[^\s{}\(\),"\r\n]+/, 'attribute'],
+
+            // Bare values
             [/[^\s{}\(\),"=@<>\r\n]+/, 'value'],
         ],
 
-        // String in key position
+        // String states
         stringKey: [
             [/[^\\"]+/, 'string.key'],
             [/\\./, 'string.escape'],
-            [/"/, { token: 'string.key.end', next: '@value' }],
-        ],
-
-        rawStringKey: [
-            [/"(#*)/, {
-                cases: {
-                    '"$S2': { token: 'string.key.end', next: '@value' },
-                    '@default': 'string.key',
-                },
-            }],
-            [/[^"]+/, 'string.key'],
+            [/"/, { token: 'string.key', next: '@afterKey' }],
         ],
 
         string: [
             [/[^\\"]+/, 'string'],
             [/\\./, 'string.escape'],
-            [/"/, { token: 'string.end', next: '@pop' }],
+            [/"/, { token: 'string', next: '@pop' }],
         ],
 
         rawString: [
-            [/"(#*)/, {
-                cases: {
-                    '"$S2': { token: 'string.raw.end', next: '@pop' },
-                    '@default': 'string.raw',
-                },
-            }],
-            [/[^"]+/, 'string.raw'],
+            [/"#*/, { token: 'string', next: '@pop' }],
+            [/[^"]+/, 'string'],
         ],
 
         heredoc: [
-            [/^([A-Z][A-Z0-9_]*)$/, {
-                cases: {
-                    '$1==$S2': { token: 'string.heredoc.end', next: '@pop' },
-                    '@default': 'string.heredoc',
-                },
-            }],
+            [/^[A-Z][A-Z0-9_]*$/, { token: 'string.heredoc', next: '@root' }],
             [/.*$/, 'string.heredoc'],
         ],
     },
@@ -413,13 +414,15 @@ async function main() {
 
     // Vim mode setup
     const vimCheckbox = document.getElementById('vim-mode');
+    const vimStatusBar = document.getElementById('vim-status');
     const storedVim = localStorage.getItem('styx-monaco-vim');
     const vimEnabled = storedVim === null ? true : storedVim === 'true';
     vimCheckbox.checked = vimEnabled;
 
     function enableVim() {
         if (!vimMode && window.MonacoVim) {
-            vimMode = window.MonacoVim.initVimMode(styxEditor);
+            vimMode = window.MonacoVim.initVimMode(styxEditor, vimStatusBar);
+            vimStatusBar.style.display = 'block';
         }
     }
 
@@ -427,12 +430,19 @@ async function main() {
         if (vimMode) {
             vimMode.dispose();
             vimMode = null;
+            vimStatusBar.textContent = '';
+            vimStatusBar.style.display = 'none';
         }
     }
 
-    if (vimEnabled) {
-        enableVim();
-    }
+    // Wait a tick for MonacoVim to be ready
+    setTimeout(() => {
+        if (vimEnabled) {
+            enableVim();
+        } else {
+            vimStatusBar.style.display = 'none';
+        }
+    }, 0);
 
     vimCheckbox.addEventListener('change', (e) => {
         const enabled = e.target.checked;

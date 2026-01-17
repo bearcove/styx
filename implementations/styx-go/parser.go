@@ -355,23 +355,18 @@ func (p *parser) parseValue() (*Value, error) {
 		nextToken := p.current
 
 		if nextToken.Type == TokenGT && !nextToken.HadWhitespaceBefore {
-			// Peek ahead: if > is followed by newline/EOF, just consume the > and return scalar
-			// Otherwise, parse as attributes
-			p.advance() // consume >
+			gtToken := p.advance() // consume >
 			afterGT := p.current
-			if afterGT.HadNewlineBefore || p.check(TokenEOF, TokenRBrace, TokenRParen) {
-				// > at end of line - return just the scalar
-				return &Value{
-					Span:        scalarToken.Span,
-					PayloadKind: PayloadScalar,
-					Scalar: &Scalar{
-						Text: scalarToken.Text,
-						Kind: ScalarBare,
-						Span: scalarToken.Span,
-					},
-				}, nil
+
+			// Check if > is followed by something that can't be an attribute value
+			if afterGT.HadNewlineBefore || afterGT.HadWhitespaceBefore || p.check(TokenEOF, TokenRBrace, TokenRParen, TokenComma) {
+				// Error: trailing > without a value
+				return nil, &ParseError{
+					Message: "expected a value",
+					Span:    gtToken.Span,
+				}
 			}
-			// Not end of line - parse as attributes (we already consumed >)
+			// Valid attribute - parse value (we already consumed >)
 			return p.parseAttributesAfterGT(scalarToken)
 		}
 
@@ -422,8 +417,17 @@ func (p *parser) parseAttributesStartingWith(firstKeyToken *Token) (*Value, erro
 			break
 		}
 
-		p.advance()
-		p.advance()
+		p.advance()            // consume key
+		gtToken := p.advance() // consume >
+
+		// Check if > is followed by something that can't be an attribute value
+		afterGT := p.current
+		if afterGT.HadNewlineBefore || afterGT.HadWhitespaceBefore || p.check(TokenEOF, TokenRBrace, TokenRParen, TokenComma) {
+			return nil, &ParseError{
+				Message: "expected a value",
+				Span:    gtToken.Span,
+			}
+		}
 
 		attrKey := &Value{
 			Span:        keyToken.Span,
@@ -481,8 +485,17 @@ func (p *parser) parseAttributesAfterGT(firstKeyToken *Token) (*Value, error) {
 			break
 		}
 
-		p.advance()
-		p.advance()
+		p.advance()            // consume key
+		gtToken := p.advance() // consume >
+
+		// Check if > is followed by something that can't be an attribute value
+		afterGT := p.current
+		if afterGT.HadNewlineBefore || afterGT.HadWhitespaceBefore || p.check(TokenEOF, TokenRBrace, TokenRParen, TokenComma) {
+			return nil, &ParseError{
+				Message: "expected a value",
+				Span:    gtToken.Span,
+			}
+		}
 
 		attrKey := &Value{
 			Span:        keyToken.Span,
