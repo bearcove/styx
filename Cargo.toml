@@ -29,6 +29,7 @@ tracing = "0.1"
 
 # Testing
 insta = "1"
+proptest = "1"
 
 # Serialization
 serde_json = "1"
