@@ -12,7 +12,7 @@ export type TokenType =
   | "comma"
   | "at"
   | "tag"
-  | "eq"
+  | "gt"
   | "newline"
   | "eof";
 
@@ -26,7 +26,7 @@ export interface Token {
   hadNewlineBefore: boolean;
 }
 
-const SPECIAL_CHARS = new Set(["{", "}", "(", ")", ",", '"', "=", "@", " ", "\t", "\n", "\r"]);
+const SPECIAL_CHARS = new Set(["{", "}", "(", ")", ",", '"', ">", "@", " ", "\t", "\n", "\r"]);
 
 export class Lexer {
   private pos = 0; // character position
@@ -168,11 +168,11 @@ export class Lexer {
         hadNewlineBefore: hadNewline,
       };
     }
-    if (ch === "=") {
+    if (ch === ">") {
       this.advance();
       return {
-        type: "eq",
-        text: "=",
+        type: "gt",
+        text: ">",
         span: { start, end: this.bytePos },
         hadWhitespaceBefore: hadWhitespace,
         hadNewlineBefore: hadNewline,
@@ -230,7 +230,7 @@ export class Lexer {
   }
 
   private isTagChar(ch: string): boolean {
-    return /[A-Za-z0-9_.\-]/.test(ch);
+    return /[A-Za-z0-9_\-]/.test(ch);
   }
 
   private readQuotedString(start: number, hadWhitespace: boolean, hadNewline: boolean): Token {
