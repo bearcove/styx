@@ -558,40 +558,77 @@ impl<'src> Parser<'src> {
             };
         }
 
-        // Consume the =
-        self.advance();
+        // Consume the > and record its span
+        let gt_token = self.advance().unwrap();
+        let gt_span = gt_token.span;
 
-        // Value must immediately follow = (no whitespace)
-        let val_start = self.peek_raw().map(|t| t.span.start);
+        // Track trailing > errors
+        let mut trailing_gt_spans = Vec::new();
 
-        let Some(val_start) = val_start else {
-            // Error: missing value after = - return key as scalar for now
-            // TODO: emit error
+        // Value must immediately follow > (no whitespace)
+        let val_info = self.peek_raw().map(|t| (t.span.start, t.kind));
+
+        let Some((val_start, val_kind)) = val_info else {
+            // Error: missing value after > (EOF)
+            trailing_gt_spans.push(gt_span);
             return Atom {
-                span: start_span,
+                span: Span::new(start_span.start, gt_span.end),
                 kind: ScalarKind::Bare,
-                content: AtomContent::Scalar(first_key),
+                content: AtomContent::Attributes {
+                    entries: vec![],
+                    trailing_gt_spans,
+                },
             };
         };
 
         if val_start != eq_end {
-            // Error: whitespace after = - return key as scalar for now
-            // TODO: emit error
+            // Error: whitespace after >
+            trailing_gt_spans.push(gt_span);
             return Atom {
-                span: start_span,
+                span: Span::new(start_span.start, gt_span.end),
                 kind: ScalarKind::Bare,
-                content: AtomContent::Scalar(first_key),
+                content: AtomContent::Attributes {
+                    entries: vec![],
+                    trailing_gt_spans,
+                },
+            };
+        }
+
+        // Check if what follows is a valid attribute value
+        if !matches!(
+            val_kind,
+            TokenKind::BareScalar
+                | TokenKind::QuotedScalar
+                | TokenKind::RawScalar
+                | TokenKind::LParen
+                | TokenKind::LBrace
+                | TokenKind::At
+                | TokenKind::HeredocStart
+        ) {
+            // Error: invalid token after > (e.g., newline, comma, etc.)
+            trailing_gt_spans.push(gt_span);
+            return Atom {
+                span: Span::new(start_span.start, gt_span.end),
+                kind: ScalarKind::Bare,
+                content: AtomContent::Attributes {
+                    entries: vec![],
+                    trailing_gt_spans,
+                },
             };
         }
 
         // Parse the first value
         let first_value = self.parse_attribute_value();
         let Some(first_value) = first_value else {
-            // Invalid value type - return key as scalar
+            // Invalid value type - this shouldn't happen given the check above
+            trailing_gt_spans.push(gt_span);
             return Atom {
-                span: start_span,
+                span: Span::new(start_span.start, gt_span.end),
                 kind: ScalarKind::Bare,
-                content: AtomContent::Scalar(first_key),
+                content: AtomContent::Attributes {
+                    entries: vec![],
+                    trailing_gt_spans,
+                },
             };
         };
 
@@ -619,34 +656,55 @@ impl<'src> Parser<'src> {
             // Consume the scalar
             self.advance();
 
-            // Check for = immediately after key
-            let eq_info = self.peek_raw().map(|t| (t.kind, t.span.start, t.span.end));
-            let Some((eq_kind, eq_start, eq_end)) = eq_info else {
+            // Check for > immediately after key
+            let eq_info = self.peek_raw().map(|t| (t.kind, t.span, t.span.end));
+            let Some((eq_kind, loop_gt_span, loop_eq_end)) = eq_info else {
                 // No more tokens - we consumed a bare scalar that's not an attribute
                 // This is lost, but we stop here
                 break;
             };
 
-            if eq_kind != TokenKind::Gt || eq_start != key_span.end {
+            if eq_kind != TokenKind::Gt || loop_gt_span.start != key_span.end {
                 // Not an attribute - the consumed scalar is lost
                 break;
             }
 
-            // Consume =
+            // Consume >
             self.advance();
 
             // Check for value
-            let val_start = self.peek_raw().map(|t| t.span.start);
-            let Some(val_start) = val_start else {
+            let val_info = self.peek_raw().map(|t| (t.span.start, t.kind));
+            let Some((val_start, val_kind)) = val_info else {
+                // Error: trailing > at end of input
+                trailing_gt_spans.push(loop_gt_span);
                 break;
             };
 
-            if val_start != eq_end {
-                // Whitespace after =
+            if val_start != loop_eq_end {
+                // Error: whitespace after >
+                trailing_gt_spans.push(loop_gt_span);
+                break;
+            }
+
+            // Check if valid attribute value follows
+            if !matches!(
+                val_kind,
+                TokenKind::BareScalar
+                    | TokenKind::QuotedScalar
+                    | TokenKind::RawScalar
+                    | TokenKind::LParen
+                    | TokenKind::LBrace
+                    | TokenKind::At
+                    | TokenKind::HeredocStart
+            ) {
+                // Error: invalid token after >
+                trailing_gt_spans.push(loop_gt_span);
                 break;
             }
 
             let Some(value) = self.parse_attribute_value() else {
+                // Shouldn't happen given the check above
+                trailing_gt_spans.push(loop_gt_span);
                 break;
             };
 
@@ -660,6 +718,7 @@ impl<'src> Parser<'src> {
         let end_span = attrs
             .last()
             .map(|a| a.value.span.end)
+            .or_else(|| trailing_gt_spans.last().map(|s| s.end))
             .unwrap_or(start_span.end);
 
         Atom {
@@ -668,7 +727,10 @@ impl<'src> Parser<'src> {
                 end: end_span,
             },
             kind: ScalarKind::Bare,
-            content: AtomContent::Attributes(attrs),
+            content: AtomContent::Attributes {
+                entries: attrs,
+                trailing_gt_spans,
+            },
         }
     }
 
@@ -1305,7 +1367,20 @@ impl<'src> Parser<'src> {
                 callback.event(Event::SequenceEnd { span: atom.span })
             }
             // parser[impl attr.atom]
-            AtomContent::Attributes(attrs) => {
+            AtomContent::Attributes {
+                entries,
+                trailing_gt_spans,
+            } => {
+                // Emit errors for trailing > without value
+                for gt_span in trailing_gt_spans {
+                    if !callback.event(Event::Error {
+                        span: *gt_span,
+                        kind: ParseErrorKind::ExpectedValue,
+                    }) {
+                        return false;
+                    }
+                }
+
                 // Emit as comma-separated object
                 if !callback.event(Event::ObjectStart {
                     span: atom.span,
@@ -1314,7 +1389,7 @@ impl<'src> Parser<'src> {
                     return false;
                 }
 
-                for attr in attrs {
+                for attr in entries {
                     if !callback.event(Event::EntryStart) {
                         return false;
                     }
@@ -1449,7 +1524,7 @@ impl<'src> Parser<'src> {
                         | AtomContent::Object { .. }
                         | AtomContent::Sequence { .. }
                         | AtomContent::Tag { .. }
-                        | AtomContent::Attributes(_) => {
+                        | AtomContent::Attributes { .. } => {
                             // Invalid key payload
                             callback.event(Event::Error {
                                 span: inner.span,
@@ -1461,7 +1536,7 @@ impl<'src> Parser<'src> {
             }
             AtomContent::Object { .. }
             | AtomContent::Sequence { .. }
-            | AtomContent::Attributes(_) => {
+            | AtomContent::Attributes { .. } => {
                 // Objects, sequences not allowed as keys
                 callback.event(Event::Error {
                     span: atom.span,
@@ -1736,7 +1811,11 @@ enum AtomContent<'src> {
     },
     /// Attributes (key=value pairs that become an object).
     // parser[impl attr.syntax] parser[impl attr.atom]
-    Attributes(Vec<AttributeEntry<'src>>),
+    Attributes {
+        entries: Vec<AttributeEntry<'src>>,
+        /// Spans of trailing `>` without a value (for error reporting).
+        trailing_gt_spans: Vec<Span>,
+    },
 }
 
 /// An attribute entry (key=value).
@@ -1795,7 +1874,7 @@ impl KeyValue {
             // Objects/Sequences as keys are unusual, treat as their text repr
             AtomContent::Object { .. } => KeyValue::Scalar("{}".into()),
             AtomContent::Sequence { .. } => KeyValue::Scalar("()".into()),
-            AtomContent::Attributes(_) => KeyValue::Scalar("{}".into()),
+            AtomContent::Attributes { .. } => KeyValue::Scalar("{}".into()),
         }
     }
 }
@@ -3016,6 +3095,54 @@ mod tests {
         assert!(
             !events.iter().any(|e| matches!(e, Event::Error { .. })),
             "Dot in value should not cause errors"
+        );
+    }
+
+    #[test]
+    fn test_trailing_gt_error() {
+        // key value> should report an error for the trailing >
+        let events = parse("key value>");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::ExpectedValue,
+                    ..
+                }
+            )),
+            "Trailing > should produce ExpectedValue error"
+        );
+    }
+
+    #[test]
+    fn test_trailing_gt_at_eof() {
+        // key> at end of input should report an error
+        let events = parse("entry key>");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::ExpectedValue,
+                    ..
+                }
+            )),
+            "Trailing > at EOF should produce ExpectedValue error"
+        );
+    }
+
+    #[test]
+    fn test_whitespace_after_gt_error() {
+        // key> value (with whitespace after >) should report an error
+        let events = parse("entry key> value");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Error {
+                    kind: ParseErrorKind::ExpectedValue,
+                    ..
+                }
+            )),
+            "Whitespace after > should produce ExpectedValue error"
         );
     }
 }
