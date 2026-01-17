@@ -3,5 +3,4 @@ source: crates/styx-schema/src/generate.rs
 expression: schema
 ---
 @ @object{inner @Inner, name @string}
-
 Inner @object{value @int}
