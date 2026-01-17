@@ -112,3 +112,54 @@ jobs:
 
       - name: Compare with golden
         run: diff -u ../../compliance/golden.sexp output.sexp
+
+  python-lint:
+    name: Python / Lint
+    runs-on: depot-ubuntu-24.04-4
+    defaults:
+      run:
+        working-directory: bindings/styx-py
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Run ruff check
+        run: uv run ruff check styx/
+
+      - name: Run ruff format check
+        run: uv run ruff format --check styx/
+
+      - name: Run ty check
+        run: uv run ty check styx/
+
+  compliance-py:
+    name: Compliance / Python
+    runs-on: depot-ubuntu-24.04-4
+    defaults:
+      run:
+        working-directory: bindings/styx-py
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run compliance suite
+        run: uv run styx-compliance ../../compliance/corpus > output.sexp
+
+      - name: Compare with golden
+        run: diff -u ../../compliance/golden.sexp output.sexp
