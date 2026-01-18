@@ -247,17 +247,12 @@ jobs:
 
   swift-build:
     name: Swift / Build
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: macos-latest
     defaults:
       run:
         working-directory: implementations/styx-swift
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Swift
-        uses: swift-actions/setup-swift@cc582c8cc5903db4beef8e6f57a0f8237073600a
-        with:
-          swift-version: '6.0'
 
       - name: Build
         run: swift build
@@ -267,17 +262,12 @@ jobs:
 
   compliance-swift:
     name: Compliance / Swift
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: macos-latest
     defaults:
       run:
         working-directory: implementations/styx-swift
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Swift
-        uses: swift-actions/setup-swift@cc582c8cc5903db4beef8e6f57a0f8237073600a
-        with:
-          swift-version: '6.0'
 
       - name: Build compliance runner
         run: swift build -c release --product styx-compliance
