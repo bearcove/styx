@@ -1,12 +1,10 @@
-@schema crate:dodeca-config@1
+@schema {id crate:dodeca-config@1, cli ddc}
 
 // Dodeca configuration for styx docs
-content "docs/content"
-output "docs/public"
-stable_assets [
-"docs/static/favicon.svg favicon.svg"
-]
+content docs/content
+output docs/public
+stable_assets (favicon.svg)
 syntax_highlight {
-    light_theme "github-light"
-    dark_theme "tokyo-night"
+    light_theme github-light
+    dark_theme tokyo-night
 }
