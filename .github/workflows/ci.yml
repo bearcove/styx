@@ -26,6 +26,15 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
+      - name: Check query files in sync
+        run: |
+          for f in highlights.scm brackets.scm indents.scm injections.scm; do
+            diff -u "crates/tree-sitter-styx/queries/$f" "editors/zed-styx/languages/styx/$f" || {
+              echo "::error::$f is out of sync between tree-sitter-styx and zed-styx. Run 'just sync-queries' to fix."
+              exit 1
+            }
+          done
+
   clippy:
     name: Rust / Clippy
     runs-on: depot-ubuntu-24.04-16
