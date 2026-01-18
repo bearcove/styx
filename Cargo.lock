@@ -1501,6 +1501,7 @@ dependencies = [
  "facet-styx",
  "serde_json",
  "styx-cst",
+ "styx-embed",
  "styx-format",
  "styx-lsp",
  "styx-parse",
@@ -1543,6 +1544,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "lz4_flex",
+ "proc-macro2",
  "unsynn",
 ]
 
