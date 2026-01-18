@@ -22,10 +22,12 @@ pub struct SchemaFile {
 /// Schema metadata.
 #[derive(Facet, Debug, Clone)]
 pub struct Meta {
-    /// Unique identifier for the schema (URL recommended).
+    /// Unique identifier for the schema (e.g., `crate:myapp-config@1`).
     pub id: String,
-    /// Schema version (date or semver).
-    pub version: String,
+    /// Schema version (semver).
+    pub version: Option<String>,
+    /// CLI binary name for schema discovery.
+    pub cli: Option<String>,
     /// Human-readable description.
     pub description: Option<String>,
 }

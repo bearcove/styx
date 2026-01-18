@@ -32,10 +32,12 @@ IntConstraints @object{
 
 /// Schema metadata.
 Meta @object{
-    /// Unique identifier for the schema (URL recommended).
+    /// Unique identifier for the schema (e.g., `crate:myapp-config@1`).
     id @string
-    /// Schema version (date or semver).
-    version @string
+    /// Schema version (semver).
+    version @optional(@string)
+    /// CLI binary name for schema discovery.
+    cli @optional(@string)
     /// Human-readable description.
     description @optional(@string)
 }

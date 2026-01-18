@@ -92,7 +92,7 @@ mod tests {
 
         // Verify metadata
         assert_eq!(schema_file.meta.id, "https://styx-lang.org/schemas/schema");
-        assert_eq!(schema_file.meta.version, "2026-01-11");
+        assert_eq!(schema_file.meta.version.as_deref(), Some("2026-01-11"));
         assert!(schema_file.meta.description.is_some());
 
         // Verify schema definitions exist
