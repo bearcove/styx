@@ -17,12 +17,12 @@ repository = "https://github.com/bearcove/styx"
 ariadne = "0.6"
 
 # Facet crates
-facet = "0.42"
-facet-args = "0.42"
-facet-core = "0.42"
-facet-format = "0.42"
-facet-reflect = "0.42"
-facet-testhelpers = { git = "https://github.com/facet-rs/facet" }
+facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-args = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-core = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-format = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-reflect = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-testhelpers = { git = "https://github.com/facet-rs/facet", branch = "main" }
 
 # Tracing
 tracing = "0.1"
@@ -42,13 +42,6 @@ styx-schema = { path = "crates/styx-schema" }
 styx-cst = { path = "crates/styx-cst" }
 styx-lsp = { path = "crates/styx-lsp" }
 facet-styx = { path = "crates/facet-styx" }
-
-[patch.crates-io]
-facet = { git = "https://github.com/facet-rs/facet" }
-facet-args = { git = "https://github.com/facet-rs/facet" }
-facet-core = { git = "https://github.com/facet-rs/facet" }
-facet-format = { git = "https://github.com/facet-rs/facet" }
-facet-reflect = { git = "https://github.com/facet-rs/facet" }
 
 # Optimize WASM builds for size
 [profile.release.package.styx-wasm]
