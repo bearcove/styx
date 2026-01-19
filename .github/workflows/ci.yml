@@ -304,6 +304,27 @@ jobs:
         working-directory: crates/styx-ffi/examples
         run: LD_LIBRARY_PATH=../../../target/release ./example
 
+  build-windows:
+    name: Build / Windows
+    runs-on: depot-windows-2022-16
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build styx CLI
+        run: cargo build --release --bin styx
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: styx-windows-x86_64
+          path: target/release/styx.exe
+
   jetbrains-plugin:
     name: JetBrains / Build Plugin
     runs-on: depot-ubuntu-24.04-4
