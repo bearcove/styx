@@ -7,19 +7,26 @@ edition.workspace = true
 styx-parse.workspace = true
 styx-tree.workspace = true
 styx-format.workspace = true
-facet-styx.workspace = true
 facet.workspace = true
 ariadne.workspace = true
 serde_json.workspace = true
+
+# Optional - for schema generation binary
+facet-styx = { workspace = true, optional = true }
 
 # Tracing (optional - compiles to nothing when disabled)
 tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
+facet-styx = { workspace = true, features = ["tracing"] }
 facet-format = { workspace = true, features = ["tracing"] }
 tracing.workspace = true
 facet-testhelpers.workspace = true
 insta = "1"
 
 [features]
-tracing = ["dep:tracing", "facet-styx/tracing"]
+tracing = ["dep:tracing"]
+
+[[bin]]
+name = "gen-meta-schema"
+required-features = ["facet-styx"]
