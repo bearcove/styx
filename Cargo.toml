@@ -5,7 +5,7 @@ members = [
 ]
 exclude = [
     "editors/zed-styx",
-    "crates/styx-webmd",
+    "tools/styx-webmd",
 ]
 
 [workspace.package]
