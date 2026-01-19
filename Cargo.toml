@@ -18,7 +18,7 @@ repository = "https://github.com/bearcove/styx"
 ariadne = "0.6"
 
 # Facet crates
-facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet = { git = "https://github.com/facet-rs/facet", branch = "main", features = ["reflect"] }
 facet-args = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-core = { git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-format = { git = "https://github.com/facet-rs/facet", branch = "main" }

@@ -8,11 +8,71 @@ extern crate alloc;
 use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::ptr::NonNull;
 
-use facet::{Def, EnumType, Facet, Field, FieldFlags, Shape, StructKind, Type, UserType};
+use facet::{
+    Def, DefaultSource, EnumType, Facet, Field, FieldFlags, Peek, PtrConst, PtrMut, PtrUninit,
+    Shape, ShapeLayout, StructKind, Type, UserType,
+};
+use facet_styx::peek_to_string;
 use styx_format::{FormatOptions, format_value};
 use styx_parse::Separator;
 use styx_tree::{Entry, Object, Payload, Sequence, Tag, Value};
+
+/// Try to get the default value for a field as a styx Value.
+/// Returns None if the field has no default or if serialization fails.
+fn field_default_value(field: &Field) -> Option<Value> {
+    let default_source = field.default?;
+    let shape = field.shape.get();
+
+    // Allocate memory for the value
+    let layout = match shape.layout {
+        ShapeLayout::Sized(l) => l,
+        ShapeLayout::Unsized => return None,
+    };
+    if layout.size() == 0 {
+        // Zero-sized type - can't really serialize a meaningful default
+        return None;
+    }
+
+    let ptr = unsafe { alloc::alloc::alloc(layout) };
+    if ptr.is_null() {
+        return None;
+    }
+    let ptr = unsafe { NonNull::new_unchecked(ptr) };
+
+    // Initialize with the default value
+    let ptr_uninit = PtrUninit::new(ptr.as_ptr());
+    match default_source {
+        DefaultSource::Custom(default_fn) => {
+            unsafe { default_fn(ptr_uninit) };
+        }
+        DefaultSource::FromTrait => {
+            let ptr_mut = unsafe { ptr_uninit.assume_init() };
+            if unsafe { shape.call_default_in_place(ptr_mut) }.is_none() {
+                // No default implementation available
+                unsafe { alloc::alloc::dealloc(ptr.as_ptr(), layout) };
+                return None;
+            }
+        }
+    }
+
+    // Create a Peek to serialize
+    let ptr_const = PtrConst::new(ptr.as_ptr());
+    let peek = unsafe { Peek::unchecked_new(ptr_const, shape) };
+
+    // Serialize to styx string
+    let styx_str = peek_to_string(peek).ok()?;
+
+    // Drop the value and free memory
+    unsafe {
+        shape.call_drop_in_place(PtrMut::new(ptr.as_ptr()));
+        alloc::alloc::dealloc(ptr.as_ptr(), layout);
+    }
+
+    // Use the serialized string as a scalar value
+    Some(Value::scalar(&styx_str))
+}
 
 /// Generate a Styx schema string from a Facet type.
 ///
@@ -181,7 +241,23 @@ impl StyxSchemaGenerator {
                     .filter(|f| !f.flags.contains(FieldFlags::SKIP))
                     .map(|field| {
                         let field_name = field.effective_name();
-                        let field_type = self.type_for_shape(field.shape.get());
+                        let mut field_type = self.type_for_shape(field.shape.get());
+
+                        // Wrap with @default if field has a default value
+                        if let Some(default_value) = field_default_value(field) {
+                            // Format: @default(value @type)
+                            field_type = tag(
+                                "default",
+                                Some(Value {
+                                    tag: None,
+                                    payload: Some(Payload::Sequence(Sequence {
+                                        items: vec![default_value, field_type],
+                                        span: None,
+                                    })),
+                                    span: None,
+                                }),
+                            );
+                        }
 
                         // Extract field doc comment
                         let doc = clean_doc(field.doc);
@@ -604,6 +680,21 @@ mod tests {
         }
 
         let schema = to_styx_schema::<User>();
+        insta::assert_snapshot!(schema);
+    }
+
+    #[test]
+    fn test_field_with_default() {
+        #[derive(Facet)]
+        struct Config {
+            name: String,
+            #[facet(default = 8080)]
+            port: u16,
+            #[facet(default = "localhost".to_string())]
+            host: String,
+        }
+
+        let schema = to_styx_schema::<Config>();
         insta::assert_snapshot!(schema);
     }
 }

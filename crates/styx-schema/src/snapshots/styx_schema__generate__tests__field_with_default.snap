@@ -1,0 +1,5 @@
+---
+source: crates/styx-schema/src/generate.rs
+expression: schema
+---
+@ @object{name @string, port @default(8080 @int), host @default(localhost @string)}
