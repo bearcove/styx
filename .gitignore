@@ -6,6 +6,9 @@ target/
 node_modules/
 pnpm-lock.yaml
 
+# IDE files
+.idea
+
 # Built JS bundles
 docs/static/codemirror/
 docs/static/monaco/
