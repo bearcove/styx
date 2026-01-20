@@ -1718,6 +1718,7 @@ dependencies = [
  "blake3",
  "lz4_flex",
  "proc-macro2",
+ "styx-tree",
  "unsynn",
 ]
 
