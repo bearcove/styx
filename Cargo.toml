@@ -17,14 +17,14 @@ repository = "https://github.com/bearcove/styx"
 # Error reporting
 ariadne = "0.6"
 
-# Facet crates
-facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-args = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-core = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-format = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-reflect = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-testhelpers = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-value = { git = "https://github.com/facet-rs/facet", branch = "main" }
+# Facet crates (using local path for development)
+facet = { path = "../facet/facet" }
+facet-args = { path = "../facet/facet-args" }
+facet-core = { path = "../facet/facet-core" }
+facet-format = { path = "../facet/facet-format" }
+facet-reflect = { path = "../facet/facet-reflect" }
+facet-testhelpers = { path = "../facet/facet-testhelpers" }
+facet-value = { path = "../facet/facet-value" }
 
 # Tracing
 tracing = "0.1"
