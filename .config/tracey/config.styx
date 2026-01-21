@@ -1,0 +1,48 @@
+@schema {id crate:tracey-config@1, cli tracey}
+
+specs (
+    {
+        name parser
+        prefix parser
+        include (docs/content/reference/spec/parser.md)
+        impls (
+            {
+                name rust
+                include ("**/*.rs")
+            }
+        )
+    }
+    {
+        name scalars
+        prefix interp
+        include (docs/content/reference/spec/scalars.md)
+        impls (
+            {
+                name rust
+                include ("**/*.rs")
+            }
+        )
+    }
+    {
+        name schema
+        prefix schema
+        include (docs/content/reference/spec/schema.md)
+        impls (
+            {
+                name rust
+                include ("**/*.rs")
+            }
+        )
+    }
+    {
+        name diagnostics
+        prefix diag
+        include (docs/content/reference/spec/diagnostics.md)
+        impls (
+            {
+                name rust
+                include ("**/*.rs")
+            }
+        )
+    }
+)
