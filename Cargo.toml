@@ -18,13 +18,13 @@ repository = "https://github.com/bearcove/styx"
 ariadne = "0.6"
 
 # Facet crates
-facet = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-args = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-core = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-format = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-reflect = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-testhelpers = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-value = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
+facet-args = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
+facet-core = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
+facet-format = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
+facet-reflect = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
+facet-testhelpers = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
+facet-value = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
 
 # Tracing
 tracing = "0.1"
