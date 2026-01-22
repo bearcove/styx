@@ -37,14 +37,14 @@ proptest = "1"
 serde_json = "1"
 
 # Internal crates
-styx-parse = { path = "crates/styx-parse" }
-styx-format = { path = "crates/styx-format" }
-styx-tree = { path = "crates/styx-tree" }
-styx-cst = { path = "crates/styx-cst" }
-styx-lsp = { path = "crates/styx-lsp" }
-styx-embed = { path = "crates/styx-embed" }
-styx-gen-go = { path = "crates/styx-gen-go" }
-facet-styx = { path = "crates/facet-styx" }
+styx-parse = { path = "crates/styx-parse", version = "1.0" }
+styx-format = { path = "crates/styx-format", version = "1.0" }
+styx-tree = { path = "crates/styx-tree", version = "1.0" }
+styx-cst = { path = "crates/styx-cst", version = "1.0" }
+styx-lsp = { path = "crates/styx-lsp", version = "1.0" }
+styx-embed = { path = "crates/styx-embed", version = "1.0" }
+styx-gen-go = { path = "crates/styx-gen-go", version = "1.0" }
+facet-styx = { path = "crates/facet-styx", version = "1.0" }
 
 # Optimize WASM builds for size
 [profile.release.package.styx-wasm]
