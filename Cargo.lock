@@ -2047,6 +2047,7 @@ dependencies = [
  "styx-cst",
  "styx-embed",
  "styx-format",
+ "styx-gen-go",
  "styx-lsp",
  "styx-parse",
  "styx-tree",
@@ -2114,6 +2115,14 @@ dependencies = [
  "styx-parse",
  "styx-tree",
  "tracing",
+]
+
+[[package]]
+name = "styx-gen-go"
+version = "0.1.0"
+dependencies = [
+ "facet-styx",
+ "styx-tree",
 ]
 
 [[package]]
