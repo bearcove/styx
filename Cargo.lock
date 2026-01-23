@@ -260,9 +260,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.53"
+version = "1.2.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "755d2fce177175ffca841e9a06afdb2c4ab0f593d53b4dee48147dfaade85932"
+checksum = "6354c81bbfd62d9cfa9cb3c773c2b7b2a3a482d569de977fd0e961f6e7c00583"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -728,7 +728,7 @@ dependencies = [
 
 [[package]]
 name = "facet-styx"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "ariadne",
  "facet",
@@ -1520,9 +1520,9 @@ checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 
 [[package]]
 name = "quote"
-version = "1.0.43"
+version = "1.0.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc74d9a594b72ae6656596548f56f667211f8a97b3d4c3d467150794690dc40a"
+checksum = "21b2ebcf727b7760c461f091f9f0f539b77b8e87f2fd88131e7f1b433b3cece4"
 dependencies = [
  "proc-macro2",
 ]
@@ -1903,7 +1903,7 @@ dependencies = [
 
 [[package]]
 name = "serde_styx"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "serde",
  "styx-format",
@@ -2000,7 +2000,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "styx-cli"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "facet",
  "facet-args",
@@ -2029,7 +2029,7 @@ dependencies = [
 
 [[package]]
 name = "styx-cst"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "rowan",
  "styx-parse",
@@ -2037,7 +2037,7 @@ dependencies = [
 
 [[package]]
 name = "styx-embed"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "blake3",
  "goblin",
@@ -2048,7 +2048,7 @@ dependencies = [
 
 [[package]]
 name = "styx-embed-macros"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "blake3",
  "lz4_flex",
@@ -2059,7 +2059,7 @@ dependencies = [
 
 [[package]]
 name = "styx-ffi"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "cbindgen",
  "styx-tree",
@@ -2067,7 +2067,7 @@ dependencies = [
 
 [[package]]
 name = "styx-format"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "insta",
  "proptest",
@@ -2080,14 +2080,14 @@ dependencies = [
 
 [[package]]
 name = "styx-gen-go"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "facet-styx",
 ]
 
 [[package]]
 name = "styx-lsp"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "dirs",
  "eyre",
@@ -2114,7 +2114,7 @@ dependencies = [
 
 [[package]]
 name = "styx-lsp-ext"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "facet",
  "roam",
@@ -2123,14 +2123,14 @@ dependencies = [
 
 [[package]]
 name = "styx-lsp-test-schema"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "styx-parse"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "facet",
  "facet-testhelpers",
@@ -2139,7 +2139,7 @@ dependencies = [
 
 [[package]]
 name = "styx-tree"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "ariadne",
  "facet",
@@ -2151,7 +2151,7 @@ dependencies = [
 
 [[package]]
 name = "styx-wasm"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "serde",
  "serde-wasm-bindgen",
@@ -2504,7 +2504,7 @@ checksum = "4ae62f7eae5eb549c71b76658648b72cc6111f2d87d24a1e31fa907f4943e3ce"
 
 [[package]]
 name = "tree-sitter-styx"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "cc",
  "tree-sitter",
