@@ -24,7 +24,6 @@ facet-core = { git = "https://github.com/facet-rs/facet", branch = "main", versi
 facet-format = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
 facet-reflect = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
 facet-testhelpers = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
-facet-value = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
 
 # Tracing
 tracing = "0.1"
