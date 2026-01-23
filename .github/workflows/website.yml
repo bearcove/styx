@@ -29,6 +29,19 @@ jobs:
         with:
           version: 10
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen-cli
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli
+
+      - name: Build styx-webmd WASM
+        run: pnpm --dir tools/styx-webmd run build
+
       - name: Install dodeca
         run: |
           curl --proto '=https' --tlsv1.2 -LsSf https://github.com/bearcove/dodeca/releases/latest/download/dodeca-installer.sh | sh
