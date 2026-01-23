@@ -37,7 +37,7 @@ jobs:
       - name: Install wasm-bindgen-cli
         uses: taiki-e/install-action@v2
         with:
-          tool: wasm-bindgen-cli
+          tool: wasm-bindgen-cli@0.2.106
 
       - name: Build styx-webmd WASM
         run: pnpm --dir tools/styx-webmd run build
