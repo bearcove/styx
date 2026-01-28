@@ -16,6 +16,7 @@ repository = "https://github.com/bearcove/styx"
 [workspace.dependencies]
 # Error reporting
 ariadne = "0.6"
+strip-ansi-escapes = "0.2"
 
 # Facet crates
 facet = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
