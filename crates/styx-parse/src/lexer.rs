@@ -724,6 +724,23 @@ mod tests {
     }
 
     #[test]
+    fn test_attribute_syntax_tokens() {
+        // Check how the lexer tokenizes attribute syntax
+        let tokens = lex("server host>localhost");
+        // Lexer produces separate tokens - attribute syntax is handled by the parser
+        assert_eq!(
+            tokens,
+            vec![
+                (TokenKind::BareScalar, "server"),
+                (TokenKind::Whitespace, " "),
+                (TokenKind::BareScalar, "host"),
+                (TokenKind::Gt, ">"),
+                (TokenKind::BareScalar, "localhost"),
+            ]
+        );
+    }
+
+    #[test]
     fn test_unterminated_heredoc() {
         // Heredoc without closing delimiter should be an error
         let tokens = lex("<<EOF\nhello world\n");
