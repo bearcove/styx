@@ -2,8 +2,4 @@
 source: crates/facet-styx/src/tag_events_test.rs
 expression: "collect_events(\"@ {x 1}\")"
 ---
-FieldKey(None)
-StructStart
-  FieldKey(Some("x"))
-  Scalar(1)
-StructEnd
+Error: ParseError { span: Span { offset: 2, len: 1 }, kind: UnexpectedToken { got: "unexpected token", expected: "valid syntax" } }

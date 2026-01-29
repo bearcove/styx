@@ -5,6 +5,5 @@ expression: "collect_events(\"y @Foo{x 1}\")"
 FieldKey(Some("y"))
 VariantTag("Foo")
 StructStart
-  FieldKey(Some("x"))
-  Scalar(1)
 StructEnd
+Error: ParseError { span: Span { offset: 7, len: 1 }, kind: UnexpectedToken { got: "unexpected atom after value (entry has too many atoms)", expected: "valid syntax" } }

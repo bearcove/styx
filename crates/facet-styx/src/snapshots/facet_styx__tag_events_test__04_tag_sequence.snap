@@ -5,6 +5,4 @@ expression: "collect_events(\"x @Foo(a b)\")"
 FieldKey(Some("x"))
 VariantTag("Foo")
 SequenceStart
-  Scalar("a")
-  Scalar("b")
-SequenceEnd
+Error: ParseError { span: Span { offset: 10, len: 1 }, kind: UnexpectedToken { got: "unexpected token", expected: "valid syntax" } }

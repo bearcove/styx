@@ -86,8 +86,13 @@ enum State {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Context {
-    Object { implicit: bool },
-    Sequence,
+    Object {
+        implicit: bool,
+        is_tag_payload: bool,
+    },
+    Sequence {
+        is_tag_payload: bool,
+    },
     AttrObject,
 }
 
@@ -107,7 +112,7 @@ enum PathError {
 }
 
 /// Tracks dotted path state for sibling detection and reopen errors.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct PathState {
     current_path: Vec<String>,
     closed_paths: std::collections::HashSet<Vec<String>>,
@@ -172,6 +177,7 @@ impl PathState {
     }
 }
 
+#[derive(Clone)]
 pub struct Parser2<'src> {
     input: &'src str,
     lexer: Lexer<'src>,
@@ -412,8 +418,11 @@ impl<'src> Parser2<'src> {
     }
 
     /// Push an object context and associated key scope.
-    fn push_object_context(&mut self, implicit: bool) {
-        self.context_stack.push(Context::Object { implicit });
+    fn push_object_context(&mut self, implicit: bool, is_tag_payload: bool) {
+        self.context_stack.push(Context::Object {
+            implicit,
+            is_tag_payload,
+        });
         self.push_key_scope();
         self.separators_in_scope.push(None);
     }
@@ -426,8 +435,14 @@ impl<'src> Parser2<'src> {
     }
 
     /// Pop context and if it was an object, also pop key scope and separator scope.
-    fn pop_context(&mut self) -> Option<Context> {
+    /// Returns (context, needs_tag_end) where needs_tag_end is true if this was a tag payload.
+    fn pop_context(&mut self) -> (Option<Context>, bool) {
         let ctx = self.context_stack.pop();
+        let needs_tag_end = match ctx {
+            Some(Context::Object { is_tag_payload, .. }) => is_tag_payload,
+            Some(Context::Sequence { is_tag_payload }) => is_tag_payload,
+            _ => false,
+        };
         if matches!(
             ctx,
             Some(Context::Object { .. }) | Some(Context::AttrObject)
@@ -435,7 +450,7 @@ impl<'src> Parser2<'src> {
             self.pop_key_scope();
             self.separators_in_scope.pop();
         }
-        ctx
+        (ctx, needs_tag_end)
     }
 
     // === State handlers ===
@@ -446,7 +461,7 @@ impl<'src> Parser2<'src> {
         match t.kind {
             TokenKind::Eof => {
                 if !self.expr_mode {
-                    self.push_object_context(true);
+                    self.push_object_context(true, false);
                     self.event_queue.push_back(Event::ObjectEnd {
                         span: Span::new(0, 0),
                     });
@@ -472,7 +487,7 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::LBrace => {
-                self.push_object_context(false);
+                self.push_object_context(false, false);
                 self.state = State::ExpectEntry;
                 Some(Event::ObjectStart {
                     span: t.span,
@@ -480,43 +495,88 @@ impl<'src> Parser2<'src> {
                 })
             }
 
-            // Implicit root
+            // Implicit root OR expression value
             TokenKind::BareScalar => {
-                self.push_object_context(true);
+                // In expression mode, a bare scalar is a value, not a key
+                if self.expr_mode {
+                    self.event_queue.push_back(Event::DocumentEnd);
+                    self.state = State::Done;
+                    return Some(Event::Scalar {
+                        span: t.span,
+                        value: Cow::Borrowed(t.text),
+                        kind: ScalarKind::Bare,
+                    });
+                }
+
+                self.push_object_context(true, false);
                 self.emit_pending_docs();
-                self.event_queue.push_back(Event::EntryStart);
-                self.event_queue.push_back(Event::ObjectStart {
-                    span: Span::new(0, 0),
-                    separator: Separator::Newline,
-                });
 
                 // Check for dotted path
                 if t.text.contains('.') {
                     if let Some(segments) = self.parse_dotted_path(t.text, t.span) {
-                        return self.start_dotted_path(segments, t.span);
+                        // Queue EntryStart, then start_dotted_path queues the rest
+                        self.event_queue.push_back(Event::EntryStart);
+                        // Queue the events from dotted path
+                        if let Some(first_event) = self.start_dotted_path(segments.clone(), t.span)
+                        {
+                            self.event_queue.push_back(first_event);
+                        }
+                        // Drain any additional queued events and re-queue them after ObjectStart
+                        let mut additional: Vec<_> = self.event_queue.drain(..).collect();
+                        // Now return ObjectStart and queue the rest
+                        for ev in additional {
+                            self.event_queue.push_back(ev);
+                        }
+                        return Some(Event::ObjectStart {
+                            span: Span::new(0, 0),
+                            separator: Separator::Newline,
+                        });
                     } else {
-                        // Invalid dotted path
-                        self.state = State::ExpectEntry;
-                        return Some(Event::Error {
+                        // Invalid dotted path - queue error after ObjectStart
+                        self.event_queue.push_back(Event::Error {
                             span: t.span,
                             kind: ParseErrorKind::InvalidKey,
+                        });
+                        self.state = State::ExpectEntry;
+                        return Some(Event::ObjectStart {
+                            span: Span::new(0, 0),
+                            separator: Separator::Newline,
                         });
                     }
                 }
 
-                // Regular bare key
+                // Regular bare key - return ObjectStart, then queue EntryStart, then Key
+                self.event_queue.push_back(Event::EntryStart);
+                self.queue_key(t.span, None, Some(Cow::Borrowed(t.text)), ScalarKind::Bare);
                 self.state = State::AfterBareKey { key_span: t.span };
-                Some(self.emit_key(t.span, None, Some(Cow::Borrowed(t.text)), ScalarKind::Bare))
+                Some(Event::ObjectStart {
+                    span: Span::new(0, 0),
+                    separator: Separator::Newline,
+                })
             }
 
             TokenKind::QuotedScalar => {
-                self.push_object_context(true);
+                // In expression mode, a quoted scalar is a value, not a key
+                if self.expr_mode {
+                    self.validate_escapes(t.text, t.span);
+                    let value = self.unescape_quoted(t.text);
+                    self.event_queue.push_back(Event::DocumentEnd);
+                    self.state = State::Done;
+                    return Some(Event::Scalar {
+                        span: t.span,
+                        value,
+                        kind: ScalarKind::Quoted,
+                    });
+                }
+
+                self.push_object_context(true, false);
                 self.emit_pending_docs();
                 self.validate_escapes(t.text, t.span);
                 let payload = self.unescape_quoted(t.text);
+                // Return ObjectStart, then queue EntryStart, then Key
+                self.event_queue.push_back(Event::EntryStart);
                 self.queue_key(t.span, None, Some(payload), ScalarKind::Quoted);
                 self.state = State::AfterKey { key_span: t.span };
-                self.event_queue.push_back(Event::EntryStart);
                 Some(Event::ObjectStart {
                     span: Span::new(0, 0),
                     separator: Separator::Newline,
@@ -524,7 +584,15 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::At => {
-                self.push_object_context(true);
+                // In expression mode, @ is a tag value
+                if self.expr_mode {
+                    let ev = self.parse_tag_value(t);
+                    self.event_queue.push_back(Event::DocumentEnd);
+                    self.state = State::Done;
+                    return Some(ev);
+                }
+
+                self.push_object_context(true, false);
                 self.state = State::AfterAtKey { at_span: t.span };
                 self.event_queue.push_back(Event::EntryStart);
                 Some(Event::ObjectStart {
@@ -533,9 +601,32 @@ impl<'src> Parser2<'src> {
                 })
             }
 
+            TokenKind::LParen => {
+                // Sequence - only valid in expression mode
+                if self.expr_mode {
+                    self.context_stack.push(Context::Sequence {
+                        is_tag_payload: false,
+                    });
+                    self.state = State::ExpectSeqElem;
+                    return Some(Event::SequenceStart { span: t.span });
+                }
+
+                // In document mode, ( is unexpected at root
+                self.push_object_context(true, false);
+                self.state = State::ExpectEntry;
+                self.event_queue.push_back(Event::Error {
+                    span: t.span,
+                    kind: ParseErrorKind::UnexpectedToken,
+                });
+                Some(Event::ObjectStart {
+                    span: Span::new(0, 0),
+                    separator: Separator::Newline,
+                })
+            }
+
             TokenKind::HeredocStart => {
                 // Heredoc as key is invalid
-                self.push_object_context(true);
+                self.push_object_context(true, false);
                 self.skip_heredoc();
                 self.state = State::ExpectEntry;
                 self.event_queue.push_back(Event::Error {
@@ -549,7 +640,7 @@ impl<'src> Parser2<'src> {
             }
 
             _ => {
-                self.push_object_context(true);
+                self.push_object_context(true, false);
                 self.state = State::ExpectEntry;
                 Some(Event::ObjectStart {
                     span: Span::new(0, 0),
@@ -680,7 +771,7 @@ impl<'src> Parser2<'src> {
                         kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
                     });
                 }
-                self.push_object_context(false);
+                self.push_object_context(false, false);
                 self.state = State::ExpectEntry;
                 Some(Event::ObjectStart {
                     span: t.span,
@@ -695,7 +786,9 @@ impl<'src> Parser2<'src> {
                         kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
                     });
                 }
-                self.context_stack.push(Context::Sequence);
+                self.context_stack.push(Context::Sequence {
+                    is_tag_payload: false,
+                });
                 self.state = State::ExpectSeqElem;
                 Some(Event::SequenceStart { span: t.span })
             }
@@ -791,7 +884,10 @@ impl<'src> Parser2<'src> {
 
             // Skip @schema at implicit root
             if tag_name == "schema"
-                && self.context_stack.last() == Some(&Context::Object { implicit: true })
+                && matches!(
+                    self.context_stack.last(),
+                    Some(Context::Object { implicit: true, .. })
+                )
             {
                 self.skip_value();
                 self.pending_doc.clear();
@@ -840,6 +936,31 @@ impl<'src> Parser2<'src> {
                 })
             }
 
+            TokenKind::LBrace => {
+                self.push_object_context(false, false);
+                self.state = State::ExpectEntry;
+                Some(Event::ObjectStart {
+                    span: t.span,
+                    separator: Separator::Comma,
+                })
+            }
+
+            TokenKind::LParen => {
+                self.context_stack.push(Context::Sequence {
+                    is_tag_payload: false,
+                });
+                self.state = State::ExpectSeqElem;
+                Some(Event::SequenceStart { span: t.span })
+            }
+
+            TokenKind::At => {
+                let ev = self.parse_tag_value(t);
+                if !matches!(self.state, State::AfterTagBoundaryConsumed { .. }) {
+                    self.state = State::AfterValue;
+                }
+                Some(ev)
+            }
+
             _ => {
                 self.event_queue.push_back(Event::Unit { span: at_span });
                 self.event_queue.push_back(Event::EntryEnd);
@@ -868,7 +989,7 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::LBrace => {
-                self.push_object_context(false);
+                self.push_object_context(false, false);
                 self.state = State::ExpectEntry;
                 Some(Event::ObjectStart {
                     span: t.span,
@@ -877,7 +998,9 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::LParen => {
-                self.context_stack.push(Context::Sequence);
+                self.context_stack.push(Context::Sequence {
+                    is_tag_payload: false,
+                });
                 self.state = State::ExpectSeqElem;
                 Some(Event::SequenceStart { span: t.span })
             }
@@ -1041,7 +1164,7 @@ impl<'src> Parser2<'src> {
                     });
                 }
 
-                self.push_object_context(false);
+                self.push_object_context(false, false);
                 self.state = State::ExpectEntry;
                 Some(Event::ObjectStart {
                     span: t.span,
@@ -1063,7 +1186,9 @@ impl<'src> Parser2<'src> {
                     });
                 }
 
-                self.context_stack.push(Context::Sequence);
+                self.context_stack.push(Context::Sequence {
+                    is_tag_payload: false,
+                });
                 self.state = State::ExpectSeqElem;
                 Some(Event::SequenceStart { span: t.span })
             }
@@ -1295,7 +1420,10 @@ impl<'src> Parser2<'src> {
 
         match t.kind {
             TokenKind::RParen => {
-                self.context_stack.pop();
+                let (_, needs_tag_end) = self.pop_context();
+                if needs_tag_end {
+                    self.event_queue.push_back(Event::TagEnd);
+                }
                 self.state = self.state_after_close();
                 Some(Event::SequenceEnd { span: t.span })
             }
@@ -1337,7 +1465,7 @@ impl<'src> Parser2<'src> {
             TokenKind::HeredocStart => Some(self.parse_heredoc(t.span)),
 
             TokenKind::LBrace => {
-                self.push_object_context(false);
+                self.push_object_context(false, false);
                 self.state = State::ExpectEntry;
                 Some(Event::ObjectStart {
                     span: t.span,
@@ -1346,7 +1474,9 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::LParen => {
-                self.context_stack.push(Context::Sequence);
+                self.context_stack.push(Context::Sequence {
+                    is_tag_payload: false,
+                });
                 Some(Event::SequenceStart { span: t.span })
             }
 
@@ -1385,9 +1515,9 @@ impl<'src> Parser2<'src> {
             });
         }
 
-        if let Some(ctx) = self.pop_context() {
+        if let (Some(ctx), needs_tag_end) = self.pop_context() {
             match ctx {
-                Context::Object { implicit } => {
+                Context::Object { implicit, .. } => {
                     if !implicit {
                         self.event_queue.push_back(Event::Error {
                             span: Span::new(0, 0),
@@ -1395,6 +1525,9 @@ impl<'src> Parser2<'src> {
                         });
                     }
                     if self.context_stack.is_empty() {
+                        if needs_tag_end {
+                            self.event_queue.push_back(Event::TagEnd);
+                        }
                         self.event_queue.push_back(Event::DocumentEnd);
                         self.state = State::Done;
                     }
@@ -1402,12 +1535,15 @@ impl<'src> Parser2<'src> {
                         span: Span::new(self.input.len() as u32, self.input.len() as u32),
                     });
                 }
-                Context::Sequence => {
+                Context::Sequence { .. } => {
                     self.event_queue.push_back(Event::Error {
                         span: Span::new(0, 0),
                         kind: ParseErrorKind::UnclosedSequence,
                     });
                     if self.context_stack.is_empty() {
+                        if needs_tag_end {
+                            self.event_queue.push_back(Event::TagEnd);
+                        }
                         self.event_queue.push_back(Event::DocumentEnd);
                         self.state = State::Done;
                     }
@@ -1440,11 +1576,19 @@ impl<'src> Parser2<'src> {
         }
 
         match self.pop_context() {
-            Some(Context::Object { implicit: false }) => {
+            (
+                Some(Context::Object {
+                    implicit: false, ..
+                }),
+                needs_tag_end,
+            ) => {
+                if needs_tag_end {
+                    self.event_queue.push_back(Event::TagEnd);
+                }
                 self.state = self.state_after_close();
                 Some(Event::ObjectEnd { span })
             }
-            Some(ctx) => {
+            (Some(ctx), _) => {
                 // Push back - this wasn't the right context to close
                 self.context_stack.push(ctx);
                 if matches!(ctx, Context::Object { .. } | Context::AttrObject) {
@@ -1455,7 +1599,7 @@ impl<'src> Parser2<'src> {
                     kind: ParseErrorKind::UnexpectedToken,
                 })
             }
-            None => Some(Event::Error {
+            (None, _) => Some(Event::Error {
                 span,
                 kind: ParseErrorKind::UnexpectedToken,
             }),
@@ -1463,7 +1607,7 @@ impl<'src> Parser2<'src> {
     }
 
     fn close_attr_obj(&mut self, obj_span: Span) {
-        self.pop_context(); // AttrObject - pops key scope too
+        let _ = self.pop_context(); // AttrObject - pops key scope too (never a tag payload)
         self.event_queue
             .push_back(Event::ObjectEnd { span: obj_span });
         self.event_queue.push_back(Event::EntryEnd);
@@ -1473,7 +1617,7 @@ impl<'src> Parser2<'src> {
     fn state_after_close(&self) -> State {
         match self.context_stack.last() {
             Some(Context::Object { .. }) => State::AfterValue,
-            Some(Context::Sequence) => State::ExpectSeqElem,
+            Some(Context::Sequence { .. }) => State::ExpectSeqElem,
             Some(Context::AttrObject) => State::MaybeMoreAttr {
                 obj_span: Span::new(0, 0),
             },
@@ -1511,7 +1655,7 @@ impl<'src> Parser2<'src> {
             if next.span.start == name_end {
                 match next.kind {
                     TokenKind::LBrace => {
-                        self.push_object_context(false);
+                        self.push_object_context(false, true); // is_tag_payload = true
                         self.event_queue.push_back(Event::ObjectStart {
                             span: next.span,
                             separator: Separator::Comma,
@@ -1523,7 +1667,9 @@ impl<'src> Parser2<'src> {
                         };
                     }
                     TokenKind::LParen => {
-                        self.context_stack.push(Context::Sequence);
+                        self.context_stack.push(Context::Sequence {
+                            is_tag_payload: true,
+                        });
                         self.event_queue
                             .push_back(Event::SequenceStart { span: next.span });
                         self.state = State::ExpectSeqElem;
@@ -1587,10 +1733,16 @@ impl<'src> Parser2<'src> {
             };
         }
 
-        // @ alone - unit, but we consumed a token
-        self.handle_consumed_after_tag(t);
-        Event::Unit {
+        // @ alone - unit TAG (not just unit value)
+        // This is a tag with empty name and implicit unit payload
+        self.event_queue.push_back(Event::Unit {
             span: at_token.span,
+        });
+        self.event_queue.push_back(Event::TagEnd);
+        self.handle_consumed_after_tag(t);
+        Event::TagStart {
+            span: at_token.span,
+            name: "",
         }
     }
 
@@ -1918,7 +2070,7 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::LBrace => {
-                self.push_object_context(false);
+                self.push_object_context(false, false);
                 self.state = State::ExpectEntry;
                 // After the object closes, we'll need to close the dotted path objects
                 // This is handled by the context stack
@@ -1929,7 +2081,9 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::LParen => {
-                self.context_stack.push(Context::Sequence);
+                self.context_stack.push(Context::Sequence {
+                    is_tag_payload: false,
+                });
                 self.state = State::ExpectSeqElem;
                 Some(Event::SequenceStart { span: t.span })
             }
@@ -2356,6 +2510,9 @@ a b c
     #[test]
     fn test_unit_value() {
         let events = parse("flag @");
+        for e in &events {
+            trace!(?e, "event");
+        }
         assert!(events.iter().any(|e| matches!(e, Event::Unit { .. })));
     }
 
@@ -3326,5 +3483,25 @@ foo bar
 ^^^^^^^^^^^^ DanglingDocComment
 "#,
         );
+    }
+
+    #[test]
+    fn test_nested_tag_in_object() {
+        let input = r#"meta {id test}
+schema {
+    @ @object{
+        name @optional(@string)
+    }
+}"#;
+        let events = parse(input);
+        for (i, e) in events.iter().enumerate() {
+            eprintln!("{i}: {e:?}");
+        }
+        // Check no errors
+        let errors: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, Event::Error { .. }))
+            .collect();
+        assert!(errors.is_empty(), "Unexpected errors: {:?}", errors);
     }
 }
