@@ -483,23 +483,14 @@ impl<'src> Parser2<'src> {
 
                 // Regular bare key
                 self.state = State::AfterBareKey { key_span: t.span };
-                Some(Event::Key {
-                    span: t.span,
-                    tag: None,
-                    payload: Some(Cow::Borrowed(t.text)),
-                    kind: ScalarKind::Bare,
-                })
+                Some(self.emit_key(t.span, None, Some(Cow::Borrowed(t.text)), ScalarKind::Bare))
             }
 
             TokenKind::QuotedScalar => {
                 self.push_object_context(true);
                 self.emit_pending_docs();
-                self.event_queue.push_back(Event::Key {
-                    span: t.span,
-                    tag: None,
-                    payload: Some(self.unescape_quoted(t.text)),
-                    kind: ScalarKind::Quoted,
-                });
+                let payload = self.unescape_quoted(t.text);
+                self.queue_key(t.span, None, Some(payload), ScalarKind::Quoted);
                 self.state = State::AfterKey { key_span: t.span };
                 self.event_queue.push_back(Event::EntryStart);
                 Some(Event::ObjectStart {
@@ -587,36 +578,23 @@ impl<'src> Parser2<'src> {
                 }
 
                 // Regular bare key
-                self.event_queue.push_back(Event::Key {
-                    span: t.span,
-                    tag: None,
-                    payload: Some(Cow::Borrowed(t.text)),
-                    kind: ScalarKind::Bare,
-                });
+                self.queue_key(t.span, None, Some(Cow::Borrowed(t.text)), ScalarKind::Bare);
                 self.state = State::AfterBareKey { key_span: t.span };
                 Some(Event::EntryStart)
             }
 
             TokenKind::QuotedScalar => {
                 self.emit_pending_docs();
-                self.event_queue.push_back(Event::Key {
-                    span: t.span,
-                    tag: None,
-                    payload: Some(self.unescape_quoted(t.text)),
-                    kind: ScalarKind::Quoted,
-                });
+                let payload = self.unescape_quoted(t.text);
+                self.queue_key(t.span, None, Some(payload), ScalarKind::Quoted);
                 self.state = State::AfterKey { key_span: t.span };
                 Some(Event::EntryStart)
             }
 
             TokenKind::RawScalar => {
                 self.emit_pending_docs();
-                self.event_queue.push_back(Event::Key {
-                    span: t.span,
-                    tag: None,
-                    payload: Some(Cow::Borrowed(Self::strip_raw_delimiters(t.text))),
-                    kind: ScalarKind::Raw,
-                });
+                let payload = Cow::Borrowed(Self::strip_raw_delimiters(t.text));
+                self.queue_key(t.span, None, Some(payload), ScalarKind::Raw);
                 self.state = State::AfterKey { key_span: t.span };
                 Some(Event::EntryStart)
             }
@@ -792,25 +770,14 @@ impl<'src> Parser2<'src> {
                 return None;
             }
 
-            self.event_queue.push_back(Event::Key {
-                span: Span::new(at_span.start, name_end),
-                tag: Some(tag_name),
-                payload: None,
-                kind: ScalarKind::Bare,
-            });
-            self.state = State::AfterKey {
-                key_span: Span::new(at_span.start, name_end),
-            };
+            let key_span = Span::new(at_span.start, name_end);
+            self.queue_key(key_span, Some(tag_name), None, ScalarKind::Bare);
+            self.state = State::AfterKey { key_span };
             return None;
         }
 
         // @ alone = unit key
-        self.event_queue.push_back(Event::Key {
-            span: at_span,
-            tag: None,
-            payload: None,
-            kind: ScalarKind::Bare,
-        });
+        self.queue_key(at_span, None, None, ScalarKind::Bare);
 
         // Now handle the token we got as value position
         match t.kind {
@@ -957,12 +924,8 @@ impl<'src> Parser2<'src> {
             TokenKind::BareScalar => {
                 // Emit inner entry for this attribute
                 self.event_queue.push_back(Event::EntryStart);
-                self.event_queue.push_back(Event::Key {
-                    span: key_span,
-                    tag: None,
-                    payload: Some(Cow::Borrowed(self.span_text(key_span))),
-                    kind: ScalarKind::Bare,
-                });
+                let key_text = Cow::Borrowed(self.span_text(key_span));
+                self.queue_key(key_span, None, Some(key_text), ScalarKind::Bare);
                 self.event_queue.push_back(Event::Scalar {
                     span: t.span,
                     value: Cow::Borrowed(t.text),
@@ -986,12 +949,8 @@ impl<'src> Parser2<'src> {
 
             TokenKind::QuotedScalar => {
                 self.event_queue.push_back(Event::EntryStart);
-                self.event_queue.push_back(Event::Key {
-                    span: key_span,
-                    tag: None,
-                    payload: Some(Cow::Borrowed(self.span_text(key_span))),
-                    kind: ScalarKind::Bare,
-                });
+                let key_text = Cow::Borrowed(self.span_text(key_span));
+                self.queue_key(key_span, None, Some(key_text), ScalarKind::Bare);
                 self.event_queue.push_back(Event::Scalar {
                     span: t.span,
                     value: self.unescape_quoted(t.text),
@@ -1014,12 +973,8 @@ impl<'src> Parser2<'src> {
 
             TokenKind::RawScalar => {
                 self.event_queue.push_back(Event::EntryStart);
-                self.event_queue.push_back(Event::Key {
-                    span: key_span,
-                    tag: None,
-                    payload: Some(Cow::Borrowed(self.span_text(key_span))),
-                    kind: ScalarKind::Bare,
-                });
+                let key_text = Cow::Borrowed(self.span_text(key_span));
+                self.queue_key(key_span, None, Some(key_text), ScalarKind::Bare);
                 self.event_queue.push_back(Event::Scalar {
                     span: t.span,
                     value: Cow::Borrowed(Self::strip_raw_delimiters(t.text)),
@@ -1043,12 +998,8 @@ impl<'src> Parser2<'src> {
             TokenKind::LBrace => {
                 // key>{...}
                 self.event_queue.push_back(Event::EntryStart);
-                self.event_queue.push_back(Event::Key {
-                    span: key_span,
-                    tag: None,
-                    payload: Some(Cow::Borrowed(self.span_text(key_span))),
-                    kind: ScalarKind::Bare,
-                });
+                let key_text = Cow::Borrowed(self.span_text(key_span));
+                self.queue_key(key_span, None, Some(key_text), ScalarKind::Bare);
 
                 if !in_chain {
                     self.push_attr_object_context();
@@ -1069,12 +1020,8 @@ impl<'src> Parser2<'src> {
             TokenKind::LParen => {
                 // key>(...)
                 self.event_queue.push_back(Event::EntryStart);
-                self.event_queue.push_back(Event::Key {
-                    span: key_span,
-                    tag: None,
-                    payload: Some(Cow::Borrowed(self.span_text(key_span))),
-                    kind: ScalarKind::Bare,
-                });
+                let key_text = Cow::Borrowed(self.span_text(key_span));
+                self.queue_key(key_span, None, Some(key_text), ScalarKind::Bare);
 
                 if !in_chain {
                     self.push_attr_object_context();
@@ -1092,12 +1039,8 @@ impl<'src> Parser2<'src> {
             TokenKind::At => {
                 // key>@tag
                 self.event_queue.push_back(Event::EntryStart);
-                self.event_queue.push_back(Event::Key {
-                    span: key_span,
-                    tag: None,
-                    payload: Some(Cow::Borrowed(self.span_text(key_span))),
-                    kind: ScalarKind::Bare,
-                });
+                let key_text = Cow::Borrowed(self.span_text(key_span));
+                self.queue_key(key_span, None, Some(key_text), ScalarKind::Bare);
 
                 let tag_ev = self.parse_tag_value(t);
                 self.event_queue.push_back(tag_ev);
@@ -1213,12 +1156,8 @@ impl<'src> Parser2<'src> {
                 // Emit ObjectStart, then the inner entry structure.
                 self.push_attr_object_context();
                 self.event_queue.push_back(Event::EntryStart);
-                self.event_queue.push_back(Event::Key {
-                    span: value_span,
-                    tag: None,
-                    payload: Some(Cow::Borrowed(self.span_text(value_span))),
-                    kind: ScalarKind::Bare,
-                });
+                let key_text = Cow::Borrowed(self.span_text(value_span));
+                self.queue_key(value_span, None, Some(key_text), ScalarKind::Bare);
                 self.state = State::AfterGt {
                     key_span: value_span,
                     in_chain: true,
@@ -1788,12 +1727,12 @@ impl<'src> Parser2<'src> {
             self.state = State::AfterBareKey {
                 key_span: first_span,
             };
-            return Some(Event::Key {
-                span: first_span,
-                tag: None,
-                payload: Some(Cow::Owned(first_segment)),
-                kind: ScalarKind::Bare,
-            });
+            return Some(self.emit_key(
+                first_span,
+                None,
+                Some(Cow::Owned(first_segment)),
+                ScalarKind::Bare,
+            ));
         }
 
         // Multiple segments - emit first key and ObjectStart, then continue
@@ -1808,12 +1747,12 @@ impl<'src> Parser2<'src> {
             depth: 1,
         };
 
-        Some(Event::Key {
-            span: first_span,
-            tag: None,
-            payload: Some(Cow::Owned(first_segment)),
-            kind: ScalarKind::Bare,
-        })
+        Some(self.emit_key(
+            first_span,
+            None,
+            Some(Cow::Owned(first_segment)),
+            ScalarKind::Bare,
+        ))
     }
 
     fn step_emit_dotted_path(
@@ -1837,12 +1776,7 @@ impl<'src> Parser2<'src> {
                 path,
                 path_span,
             };
-            Some(Event::Key {
-                span,
-                tag: None,
-                payload: Some(Cow::Owned(segment)),
-                kind: ScalarKind::Bare,
-            })
+            Some(self.emit_key(span, None, Some(Cow::Owned(segment)), ScalarKind::Bare))
         } else {
             // Not last - emit key, ObjectStart, and continue
             self.event_queue.push_back(Event::ObjectStart {
@@ -1854,12 +1788,7 @@ impl<'src> Parser2<'src> {
                 current_idx: current_idx + 1,
                 depth: depth + 1,
             };
-            Some(Event::Key {
-                span,
-                tag: None,
-                payload: Some(Cow::Owned(segment)),
-                kind: ScalarKind::Bare,
-            })
+            Some(self.emit_key(span, None, Some(Cow::Owned(segment)), ScalarKind::Bare))
         }
     }
 
