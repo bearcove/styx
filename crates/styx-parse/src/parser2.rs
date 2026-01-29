@@ -512,6 +512,7 @@ impl<'src> Parser2<'src> {
             TokenKind::QuotedScalar => {
                 self.push_object_context(true);
                 self.emit_pending_docs();
+                self.validate_escapes(t.text, t.span);
                 let payload = self.unescape_quoted(t.text);
                 self.queue_key(t.span, None, Some(payload), ScalarKind::Quoted);
                 self.state = State::AfterKey { key_span: t.span };
@@ -611,6 +612,7 @@ impl<'src> Parser2<'src> {
 
             TokenKind::QuotedScalar => {
                 self.emit_pending_docs();
+                self.validate_escapes(t.text, t.span);
                 let payload = self.unescape_quoted(t.text);
                 self.queue_key(t.span, None, Some(payload), ScalarKind::Quoted);
                 self.state = State::AfterKey { key_span: t.span };
@@ -718,6 +720,7 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::QuotedScalar => {
+                self.validate_escapes(t.text, t.span);
                 self.state = State::AfterValue;
                 Some(Event::Scalar {
                     span: t.span,
@@ -828,6 +831,7 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::QuotedScalar => {
+                self.validate_escapes(t.text, t.span);
                 self.state = State::AfterValue;
                 Some(Event::Scalar {
                     span: t.span,
@@ -897,6 +901,7 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::QuotedScalar => {
+                self.validate_escapes(t.text, t.span);
                 self.state = State::AfterValue;
                 Some(Event::Scalar {
                     span: t.span,
@@ -977,6 +982,7 @@ impl<'src> Parser2<'src> {
                 self.event_queue.push_back(Event::EntryStart);
                 let key_text = Cow::Borrowed(self.span_text(key_span));
                 self.queue_key(key_span, None, Some(key_text), ScalarKind::Bare);
+                self.validate_escapes(t.text, t.span);
                 self.event_queue.push_back(Event::Scalar {
                     span: t.span,
                     value: self.unescape_quoted(t.text),
@@ -1314,11 +1320,14 @@ impl<'src> Parser2<'src> {
                 kind: ScalarKind::Bare,
             }),
 
-            TokenKind::QuotedScalar => Some(Event::Scalar {
-                span: t.span,
-                value: self.unescape_quoted(t.text),
-                kind: ScalarKind::Quoted,
-            }),
+            TokenKind::QuotedScalar => {
+                self.validate_escapes(t.text, t.span);
+                Some(Event::Scalar {
+                    span: t.span,
+                    value: self.unescape_quoted(t.text),
+                    kind: ScalarKind::Quoted,
+                })
+            }
 
             TokenKind::RawScalar => Some(Event::Scalar {
                 span: t.span,
@@ -1525,6 +1534,7 @@ impl<'src> Parser2<'src> {
                         };
                     }
                     TokenKind::QuotedScalar => {
+                        self.validate_escapes(next.text, next.span);
                         self.event_queue.push_back(Event::Scalar {
                             span: next.span,
                             value: self.unescape_quoted(next.text),
@@ -1929,6 +1939,7 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::QuotedScalar => {
+                self.validate_escapes(t.text, t.span);
                 self.state = State::AfterValue;
                 Some(Event::Scalar {
                     span: t.span,
@@ -1975,6 +1986,114 @@ impl<'src> Parser2<'src> {
     }
 
     // === String processing ===
+
+    /// Validate escape sequences in a quoted string and emit errors for invalid ones.
+    fn validate_escapes(&mut self, text: &str, span: Span) {
+        // Remove surrounding quotes for validation
+        let inner = if text.starts_with('"') && text.ends_with('"') && text.len() >= 2 {
+            &text[1..text.len() - 1]
+        } else {
+            text
+        };
+
+        let mut chars = inner.char_indices().peekable();
+
+        while let Some((i, c)) = chars.next() {
+            if c == '\\' {
+                let escape_start = i;
+                match chars.next() {
+                    Some((_, 'n' | 'r' | 't' | '\\' | '"')) => {
+                        // Valid escape
+                    }
+                    Some((_, 'u')) => {
+                        // Unicode escape - validate format
+                        match chars.peek() {
+                            Some((_, '{')) => {
+                                // \u{X...} form - consume until }
+                                chars.next(); // consume '{'
+                                let mut valid = true;
+                                let mut found_close = false;
+                                for (_, c) in chars.by_ref() {
+                                    if c == '}' {
+                                        found_close = true;
+                                        break;
+                                    }
+                                    if !c.is_ascii_hexdigit() {
+                                        valid = false;
+                                    }
+                                }
+                                if !found_close || !valid {
+                                    let end = chars.peek().map(|(i, _)| *i).unwrap_or(inner.len());
+                                    let seq = &inner[escape_start..end.min(escape_start + 12)];
+                                    let error_start = span.start + escape_start as u32 + 1; // +1 for opening quote
+                                    let error_span =
+                                        Span::new(error_start, error_start + seq.len() as u32);
+                                    self.event_queue.push_back(Event::Error {
+                                        span: error_span,
+                                        kind: ParseErrorKind::InvalidEscape(format!(
+                                            "\\{}",
+                                            &seq[1..]
+                                        )),
+                                    });
+                                }
+                            }
+                            Some((_, c)) if c.is_ascii_hexdigit() => {
+                                // \uXXXX form - need exactly 4 hex digits
+                                let mut count = 1;
+                                while count < 4 {
+                                    match chars.peek() {
+                                        Some((_, c)) if c.is_ascii_hexdigit() => {
+                                            chars.next();
+                                            count += 1;
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                                if count != 4 {
+                                    let end = chars.peek().map(|(i, _)| *i).unwrap_or(inner.len());
+                                    let seq = &inner[escape_start..end];
+                                    let error_start = span.start + escape_start as u32 + 1;
+                                    let error_span =
+                                        Span::new(error_start, error_start + seq.len() as u32);
+                                    self.event_queue.push_back(Event::Error {
+                                        span: error_span,
+                                        kind: ParseErrorKind::InvalidEscape(seq.to_string()),
+                                    });
+                                }
+                            }
+                            _ => {
+                                // Invalid \u with no hex digits
+                                let error_start = span.start + escape_start as u32 + 1;
+                                let error_span = Span::new(error_start, error_start + 2);
+                                self.event_queue.push_back(Event::Error {
+                                    span: error_span,
+                                    kind: ParseErrorKind::InvalidEscape("\\u".to_string()),
+                                });
+                            }
+                        }
+                    }
+                    Some((_, c)) => {
+                        // Invalid escape sequence
+                        let error_start = span.start + escape_start as u32 + 1;
+                        let error_span = Span::new(error_start, error_start + 2);
+                        self.event_queue.push_back(Event::Error {
+                            span: error_span,
+                            kind: ParseErrorKind::InvalidEscape(format!("\\{}", c)),
+                        });
+                    }
+                    None => {
+                        // Trailing backslash
+                        let error_start = span.start + escape_start as u32 + 1;
+                        let error_span = Span::new(error_start, error_start + 1);
+                        self.event_queue.push_back(Event::Error {
+                            span: error_span,
+                            kind: ParseErrorKind::InvalidEscape("\\".to_string()),
+                        });
+                    }
+                }
+            }
+        }
+    }
 
     fn unescape_quoted(&self, text: &'src str) -> Cow<'src, str> {
         let inner = if text.starts_with('"') && text.ends_with('"') && text.len() >= 2 {
