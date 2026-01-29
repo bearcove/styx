@@ -2162,12 +2162,68 @@ impl PathState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ariadne::{CharSet, Color, Config, Label, Report, ReportKind, Source};
     use facet_testhelpers::test;
 
+    fn format_event(event: &Event<'_>) -> String {
+        match event {
+            Event::DocumentStart => "DocumentStart".to_string(),
+            Event::DocumentEnd => "DocumentEnd".to_string(),
+            Event::ObjectStart { span, separator } => {
+                format!(
+                    "ObjectStart span={}..{} separator={:?}",
+                    span.start, span.end, separator
+                )
+            }
+            Event::ObjectEnd { span } => format!("ObjectEnd span={}..{}", span.start, span.end),
+            Event::SequenceStart { span } => {
+                format!("SequenceStart span={}..{}", span.start, span.end)
+            }
+            Event::SequenceEnd { span } => format!("SequenceEnd span={}..{}", span.start, span.end),
+            Event::EntryStart => "EntryStart".to_string(),
+            Event::EntryEnd => "EntryEnd".to_string(),
+            Event::Key {
+                span,
+                tag,
+                payload,
+                kind,
+            } => format!(
+                "Key span={}..{} tag={:?} payload={:?} kind={:?}",
+                span.start, span.end, tag, payload, kind
+            ),
+            Event::Scalar { span, value, kind } => format!(
+                "Scalar span={}..{} value={:?} kind={:?}",
+                span.start, span.end, value, kind
+            ),
+            Event::Unit { span } => format!("Unit span={}..{}", span.start, span.end),
+            Event::TagStart { span, name } => {
+                format!("TagStart span={}..{} name={}", span.start, span.end, name)
+            }
+            Event::TagEnd => "TagEnd".to_string(),
+            Event::Comment { span, text } => {
+                format!("Comment span={}..{} text={:?}", span.start, span.end, text)
+            }
+            Event::DocComment { span, text } => format!(
+                "DocComment span={}..{} text={:?}",
+                span.start, span.end, text
+            ),
+            Event::Error { span, kind } => {
+                format!("Error span={}..{} kind={:?}", span.start, span.end, kind)
+            }
+        }
+    }
+
     fn parse(source: &str) -> Vec<Event<'_>> {
-        tracing::debug!(source, "parsing");
+        tracing::debug!("parsing");
         let events = Parser::new(source).parse_to_vec();
-        tracing::debug!(?events, "parsed");
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            let rendered = events
+                .iter()
+                .map(format_event)
+                .collect::<Vec<_>>()
+                .join("\n");
+            tracing::debug!(events = %rendered, "parsed events");
+        }
         events
     }
 
@@ -2344,157 +2400,108 @@ mod tests {
 
         // Build error message if mismatches found
         if !unmatched_expected.is_empty() || !unmatched_actual.is_empty() {
-            const DIM: &str = "\x1b[2m";
-            const RED: &str = "\x1b[31m";
-            const GREEN: &str = "\x1b[32m";
-            const RESET: &str = "\x1b[0m";
+            fn line_col_to_offset(source: &str, line: usize, col: usize) -> Option<usize> {
+                let mut line_start = 0;
+                for (idx, text) in source.lines().enumerate() {
+                    if idx == line {
+                        return Some(line_start + col.min(text.len()));
+                    }
+                    line_start += text.len() + 1;
+                }
+                None
+            }
+
+            fn build_report(
+                title: &str,
+                filename: &'static str,
+                labels: Vec<(std::ops::Range<usize>, String, Color)>,
+                source: &str,
+            ) -> Option<String> {
+                let (first_range, _, _) = labels.first()?;
+                let mut report = Report::build(ReportKind::Error, (filename, first_range.clone()))
+                    .with_message(title)
+                    .with_config(
+                        Config::default()
+                            .with_color(true)
+                            .with_char_set(CharSet::Unicode),
+                    );
+
+                for (range, message, color) in labels {
+                    report = report.with_label(
+                        Label::new((filename, range))
+                            .with_message(message)
+                            .with_color(color),
+                    );
+                }
+
+                let mut output = Vec::new();
+                report
+                    .finish()
+                    .write((filename, Source::from(source)), &mut output)
+                    .ok()?;
+                String::from_utf8(output).ok()
+            }
 
             let mut msg = String::new();
             msg.push('\n');
-            msg.push_str("╔══════════════════════════════════════════════════════════════════════════════╗\n");
-            msg.push_str("║                     PARSE ERROR ASSERTION FAILED                             ║\n");
-            msg.push_str("╚══════════════════════════════════════════════════════════════════════════════╝\n\n");
 
-            // Show what we EXPECTED (source annotated with expected errors)
-            msg.push_str("┌──────────────────────────────────────────────────────────────────────────────┐\n");
-            msg.push_str("│ EXPECTED ERRORS (from test annotations)                                      │\n");
-            msg.push_str("└──────────────────────────────────────────────────────────────────────────────┘\n");
-            let max_line_len = source.lines().map(|l| l.len()).max().unwrap_or(0);
-            for (line_idx, line) in source.lines().enumerate() {
-                let gutter = format!("  {:>3} │ ", line_idx + 1);
-                msg.push_str(&format!("{}{}{}{}\n", DIM, gutter, RESET, line));
-                // Find expected errors for this line
-                let line_errors: Vec<_> = expected_errors
-                    .iter()
-                    .filter(|(l, _, _, _)| *l == line_idx)
-                    .collect();
-                if !line_errors.is_empty() {
-                    for (_, start, end, kind) in line_errors {
-                        let mut caret_line = vec![' '; max_line_len + 4];
-                        for i in *start..*end {
-                            if i < caret_line.len() {
-                                caret_line[i] = '^';
-                            }
-                        }
-                        // Add error kind at the end
-                        let kind_str = format!(" {}", kind);
-                        for (i, c) in kind_str.chars().enumerate() {
-                            if *end + i < caret_line.len() {
-                                caret_line[*end + i] = c;
-                            } else {
-                                caret_line.push(c);
-                            }
-                        }
-                        let is_unmatched = unmatched_expected.iter().any(|(l, s, e, k)| {
-                            *l == line_idx && *s == *start && *e == *end && k == kind
-                        });
-                        let color = if is_unmatched { RED } else { RESET };
-                        let caret_gutter = format!("  {:>3} │ ", "");
-                        msg.push_str(&format!(
-                            "{}{}{}{}{}{}\n",
-                            DIM,
-                            caret_gutter,
-                            RESET,
-                            color,
-                            caret_line.iter().collect::<String>().trim_end(),
-                            RESET
-                        ));
-                    }
-                }
+            let filename = "test.styx";
+
+            let expected_labels: Vec<_> = expected_errors
+                .iter()
+                .filter_map(|(line, start, end, kind)| {
+                    let end = (*end).max(*start + 1);
+                    let start_offset = line_col_to_offset(&source, *line, *start)?;
+                    let end_offset = line_col_to_offset(&source, *line, end)?;
+                    let is_unmatched = unmatched_expected
+                        .iter()
+                        .any(|(l, s, e, k)| l == line && s == start && *e == end && k == kind);
+                    let color = if is_unmatched {
+                        Color::Red
+                    } else {
+                        Color::Yellow
+                    };
+                    Some((start_offset..end_offset, kind.clone(), color))
+                })
+                .collect();
+
+            let actual_labels: Vec<_> = actual_errors
+                .iter()
+                .filter_map(|(span, kind)| {
+                    let (line, start, end) = span_to_line_col(&source, *span)?;
+                    let end = end.max(start + 1);
+                    let start_offset = line_col_to_offset(&source, line, start)?;
+                    let end_offset = line_col_to_offset(&source, line, end)?;
+                    let is_unmatched = unmatched_actual
+                        .iter()
+                        .any(|(l, s, e, k)| *l == line && *s == start && *e == end && k == kind);
+                    let color = if is_unmatched {
+                        Color::Green
+                    } else {
+                        Color::Cyan
+                    };
+                    Some((start_offset..end_offset, kind.clone(), color))
+                })
+                .collect();
+
+            if let Some(report) = build_report(
+                "EXPECTED ERRORS (from test annotations)",
+                filename,
+                expected_labels,
+                &source,
+            ) {
+                msg.push_str(&report);
             }
 
-            // Show what we ACTUALLY GOT (source annotated with actual errors)
-            msg.push_str("\n");
-            msg.push_str("┌──────────────────────────────────────────────────────────────────────────────┐\n");
-            msg.push_str("│ ACTUAL ERRORS (from parser)                                                  │\n");
-            msg.push_str("└──────────────────────────────────────────────────────────────────────────────┘\n");
-            for (line_idx, line) in source.lines().enumerate() {
-                let gutter = format!("  {:>3} │ ", line_idx + 1);
-                msg.push_str(&format!("{}{}{}{}\n", DIM, gutter, RESET, line));
-                // Find actual errors for this line
-                let line_errors: Vec<_> = actual_errors
-                    .iter()
-                    .filter_map(|(span, kind)| {
-                        span_to_line_col(&source, *span).map(|(l, s, e)| (l, s, e, kind.clone()))
-                    })
-                    .filter(|(l, _, _, _)| *l == line_idx)
-                    .collect();
-                if !line_errors.is_empty() {
-                    for (_, start, end, kind) in line_errors {
-                        let mut caret_line = vec![' '; max_line_len + 4];
-                        for i in start..end.max(start + 1) {
-                            if i < caret_line.len() {
-                                caret_line[i] = '^';
-                            }
-                        }
-                        // Add error kind at the end
-                        let kind_str = format!(" {}", kind);
-                        for (i, c) in kind_str.chars().enumerate() {
-                            if end + i < caret_line.len() {
-                                caret_line[end + i] = c;
-                            } else {
-                                caret_line.push(c);
-                            }
-                        }
-                        let is_unmatched = unmatched_actual.iter().any(|(l, s, e, k)| {
-                            *l == line_idx && *s == start && *e == end && k == &kind
-                        });
-                        let color = if is_unmatched { GREEN } else { RESET };
-                        let caret_gutter = format!("  {:>3} │ ", "");
-                        msg.push_str(&format!(
-                            "{}{}{}{}{}{}\n",
-                            DIM,
-                            caret_gutter,
-                            RESET,
-                            color,
-                            caret_line.iter().collect::<String>().trim_end(),
-                            RESET
-                        ));
-                    }
-                }
+            if let Some(report) = build_report(
+                "ACTUAL ERRORS (from parser)",
+                filename,
+                actual_labels,
+                &source,
+            ) {
+                msg.push('\n');
+                msg.push_str(&report);
             }
-
-            // Summary of mismatches
-            msg.push_str("\n");
-            msg.push_str("┌──────────────────────────────────────────────────────────────────────────────┐\n");
-            msg.push_str("│ MISMATCH SUMMARY                                                             │\n");
-            msg.push_str("└──────────────────────────────────────────────────────────────────────────────┘\n");
-
-            if !unmatched_expected.is_empty() {
-                msg.push_str(&format!("\n{}  ❌ Expected but NOT found:{}\n", RED, RESET));
-                for (line, start, end, kind) in &unmatched_expected {
-                    msg.push_str(&format!(
-                        "     • Line {}, columns {}-{}: {}{}{}\n",
-                        line + 1,
-                        start + 1,
-                        (*end).max(*start + 1),
-                        RED,
-                        kind,
-                        RESET
-                    ));
-                }
-            }
-
-            if !unmatched_actual.is_empty() {
-                msg.push_str(&format!(
-                    "\n{}  ❌ Found but NOT expected:{}\n",
-                    GREEN, RESET
-                ));
-                for (line, start, end, kind) in &unmatched_actual {
-                    msg.push_str(&format!(
-                        "     • Line {}, columns {}-{}: {}{}{}\n",
-                        line + 1,
-                        start + 1,
-                        (*end).max(*start + 1),
-                        GREEN,
-                        kind,
-                        RESET
-                    ));
-                }
-            }
-
-            msg.push_str("\n");
-            msg.push_str("════════════════════════════════════════════════════════════════════════════════\n");
 
             panic!("{}", msg);
         }
