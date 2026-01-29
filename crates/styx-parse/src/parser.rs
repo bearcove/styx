@@ -2995,32 +2995,22 @@ mod tests {
     // parser[verify entry.key-equality]
     #[test]
     fn test_duplicate_bare_key() {
-        let events = parse("{a 1, a 2}");
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::DuplicateKey { .. },
-                    ..
-                }
-            )),
-            "Expected DuplicateKey error"
+        assert_parse_errors(
+            r#"
+{a 1, a 2}
+      ^ DuplicateKey
+"#,
         );
     }
 
     // parser[verify entry.key-equality]
     #[test]
     fn test_duplicate_quoted_key() {
-        let events = parse(r#"{"key" 1, "key" 2}"#);
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::DuplicateKey { .. },
-                    ..
-                }
-            )),
-            "Expected DuplicateKey error for quoted keys"
+        assert_parse_errors(
+            r#"
+{"key" 1, "key" 2}
+           ^ DuplicateKey
+"#,
         );
     }
 
@@ -3028,48 +3018,33 @@ mod tests {
     #[test]
     fn test_duplicate_key_escape_normalized() {
         // "ab" and "a\u{62}" should be considered duplicates after escape processing
-        let events = parse(r#"{"ab" 1, "a\u{62}" 2}"#);
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::DuplicateKey { .. },
-                    ..
-                }
-            )),
-            "Expected DuplicateKey error for escape-normalized keys"
+        assert_parse_errors(
+            r#"
+{"ab" 1, "a\u{62}" 2}
+                  ^ DuplicateKey
+"#,
         );
     }
 
     // parser[verify entry.key-equality]
     #[test]
     fn test_duplicate_unit_key() {
-        let events = parse("{@ 1, @ 2}");
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::DuplicateKey { .. },
-                    ..
-                }
-            )),
-            "Expected DuplicateKey error for unit keys"
+        assert_parse_errors(
+            r#"
+{@ 1, @ 2}
+      ^ DuplicateKey
+"#,
         );
     }
 
     // parser[verify entry.key-equality]
     #[test]
     fn test_duplicate_tagged_key() {
-        let events = parse("{@foo 1, @foo 2}");
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::DuplicateKey { .. },
-                    ..
-                }
-            )),
-            "Expected DuplicateKey error for tagged keys"
+        assert_parse_errors(
+            r#"
+{@foo 1, @foo 2}
+          ^ DuplicateKey
+"#,
         );
     }
 
@@ -3083,33 +3058,25 @@ mod tests {
     #[test]
     fn test_duplicate_key_at_root() {
         // Test duplicate keys at the document root level (implicit root object)
-        let events = parse("a 1\na 2");
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::DuplicateKey { .. },
-                    ..
-                }
-            )),
-            "Expected DuplicateKey error at document root level"
+        assert_parse_errors(
+            r#"
+a 1
+a 2
+^ DuplicateKey
+"#,
         );
     }
 
     // parser[verify object.separators]
     #[test]
     fn test_mixed_separators_comma_then_newline() {
-        // Start with comma, then use newline - should error
-        let events = parse("{a 1, b 2\nc 3}");
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::MixedSeparators,
-                    ..
-                }
-            )),
-            "Expected MixedSeparators error when comma mode followed by newline"
+        // Start with comma, then use newline - should error at the newline
+        assert_parse_errors(
+            r#"
+{a 1, b 2
+         ^ MixedSeparators
+c 3}
+"#,
         );
     }
 
@@ -3117,16 +3084,12 @@ mod tests {
     #[test]
     fn test_mixed_separators_newline_then_comma() {
         // Start with newline, then use comma - should error
-        let events = parse("{a 1\nb 2, c 3}");
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::MixedSeparators,
-                    ..
-                }
-            )),
-            "Expected MixedSeparators error when newline mode followed by comma"
+        assert_parse_errors(
+            r#"
+{a 1
+b 2, c 3}
+    ^ MixedSeparators
+"#,
         );
     }
 
@@ -3134,33 +3097,17 @@ mod tests {
     #[test]
     fn test_consistent_comma_separators() {
         // All commas - should be fine
-        let events = parse("{a 1, b 2, c 3}");
-        assert!(
-            !events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::MixedSeparators,
-                    ..
-                }
-            )),
-            "Should not have MixedSeparators error for consistent comma separators"
-        );
+        assert_parse_errors(r#"{a 1, b 2, c 3}"#);
     }
 
     // parser[verify object.separators]
     #[test]
     fn test_consistent_newline_separators() {
         // All newlines - should be fine
-        let events = parse("{a 1\nb 2\nc 3}");
-        assert!(
-            !events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::MixedSeparators,
-                    ..
-                }
-            )),
-            "Should not have MixedSeparators error for consistent newline separators"
+        assert_parse_errors(
+            r#"{a 1
+b 2
+c 3}"#,
         );
     }
 
@@ -3204,48 +3151,33 @@ mod tests {
     // parser[verify tag.syntax]
     #[test]
     fn test_invalid_tag_name_starts_with_digit() {
-        let events = parse("x @123");
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::InvalidTagName,
-                    ..
-                }
-            )),
-            "Tag starting with digit should be invalid"
+        assert_parse_errors(
+            r#"
+x @123
+  ^^^^ InvalidTagName
+"#,
         );
     }
 
     // parser[verify tag.syntax]
     #[test]
     fn test_invalid_tag_name_starts_with_hyphen() {
-        let events = parse("x @-foo");
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::InvalidTagName,
-                    ..
-                }
-            )),
-            "Tag starting with hyphen should be invalid"
+        assert_parse_errors(
+            r#"
+x @-foo
+  ^^^^^ InvalidTagName
+"#,
         );
     }
 
     // parser[verify tag.syntax]
     #[test]
     fn test_invalid_tag_name_starts_with_dot() {
-        let events = parse("x @.foo");
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::InvalidTagName,
-                    ..
-                }
-            )),
-            "Tag starting with dot should be invalid"
+        assert_parse_errors(
+            r#"
+x @.foo
+  ^^^^^ InvalidTagName
+"#,
         );
     }
 
@@ -3301,16 +3233,13 @@ mod tests {
     // parser[verify entry.keys]
     #[test]
     fn test_heredoc_key_rejected() {
-        let events = parse("<<EOF\nkey\nEOF value");
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::InvalidKey,
-                    ..
-                }
-            )),
-            "Heredoc as key should be rejected"
+        assert_parse_errors(
+            r#"
+<<EOF
+^^^^^ InvalidKey
+key
+EOF value
+"#,
         );
     }
 
@@ -3318,16 +3247,11 @@ mod tests {
     #[test]
     fn test_invalid_escape_null() {
         // \0 is no longer a valid escape - must use \u{0} instead
-        let events = parse(r#"x "\0""#);
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::InvalidEscape(seq),
-                    ..
-                } if seq == "\\0"
-            )),
-            "\\0 should be rejected as invalid escape"
+        assert_parse_errors(
+            r#"
+x "\0"
+    ^^ InvalidEscape
+"#,
         );
     }
 
@@ -3335,16 +3259,11 @@ mod tests {
     #[test]
     fn test_invalid_escape_unknown() {
         // \q, \?, \a etc. are not valid escapes
-        let events = parse(r#"x "\q""#);
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::InvalidEscape(seq),
-                    ..
-                } if seq == "\\q"
-            )),
-            "\\q should be rejected as invalid escape"
+        assert_parse_errors(
+            r#"
+x "\q"
+    ^^ InvalidEscape
+"#,
         );
     }
 
@@ -3383,32 +3302,18 @@ mod tests {
             "Valid escapes should still work"
         );
         // No errors should be reported
-        assert!(
-            !events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::InvalidEscape(_),
-                    ..
-                }
-            )),
-            "Valid escapes should not produce errors"
-        );
+        assert_parse_errors(r#"x "a\nb\tc\\d\"e""#);
     }
 
     // parser[verify scalar.quoted.escapes]
     #[test]
     fn test_invalid_escape_in_key() {
         // Invalid escapes in keys should also be reported
-        let events = parse(r#""\0" value"#);
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::InvalidEscape(seq),
-                    ..
-                } if seq == "\\0"
-            )),
-            "\\0 in key should be rejected as invalid escape"
+        assert_parse_errors(
+            r#"
+"\0" value
+ ^^ InvalidEscape
+"#,
         );
     }
 
@@ -3432,16 +3337,7 @@ mod tests {
         assert!(keys.contains(&"host"), "Missing key 'host'");
         assert!(keys.contains(&"port"), "Missing key 'port'");
         // No errors should be reported
-        assert!(
-            !events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::TooManyAtoms,
-                    ..
-                }
-            )),
-            "Simple key-value with attributes should not produce TooManyAtoms"
-        );
+        assert_parse_errors(r#"server host>localhost port>8080"#);
     }
 
     // parser[verify entry.path]
@@ -3505,10 +3401,7 @@ mod tests {
             "Should have 2 ObjectStart for nested structure"
         );
         // No errors
-        assert!(
-            !events.iter().any(|e| matches!(e, Event::Error { .. })),
-            "Three-segment dotted path should not have errors"
-        );
+        assert_parse_errors(r#"a.b.c deep"#);
     }
 
     // parser[verify entry.path]
@@ -3538,10 +3431,11 @@ mod tests {
     #[test]
     fn test_dotted_path_empty_segment() {
         // a..b value - empty segment is invalid
-        let events = parse("a..b value");
-        assert!(
-            events.iter().any(|e| matches!(e, Event::Error { .. })),
-            "Empty segment in dotted path should produce error"
+        assert_parse_errors(
+            r#"
+a..b value
+  ^ InvalidKey
+"#,
         );
     }
 
@@ -3549,10 +3443,11 @@ mod tests {
     #[test]
     fn test_dotted_path_trailing_dot() {
         // a.b. value - trailing dot is invalid
-        let events = parse("a.b. value");
-        assert!(
-            events.iter().any(|e| matches!(e, Event::Error { .. })),
-            "Trailing dot in dotted path should produce error"
+        assert_parse_errors(
+            r#"
+a.b. value
+    ^ InvalidKey
+"#,
         );
     }
 
@@ -3560,10 +3455,11 @@ mod tests {
     #[test]
     fn test_dotted_path_leading_dot() {
         // .a.b value - leading dot is invalid
-        let events = parse(".a.b value");
-        assert!(
-            events.iter().any(|e| matches!(e, Event::Error { .. })),
-            "Leading dot in dotted path should produce error"
+        assert_parse_errors(
+            r#"
+.a.b value
+^ InvalidKey
+"#,
         );
     }
 
@@ -3586,10 +3482,7 @@ mod tests {
         assert!(keys.contains(&"b"), "Should have 'b'");
         assert!(keys.contains(&"c"), "Should have 'c'");
         // No errors
-        assert!(
-            !events.iter().any(|e| matches!(e, Event::Error { .. })),
-            "Dotted path with object value should not have errors"
-        );
+        assert_parse_errors(r#"a.b { c d }"#);
     }
 
     // parser[verify entry.path]
@@ -3611,10 +3504,7 @@ mod tests {
         assert!(keys.contains(&"matchLabels"), "Should have 'matchLabels'");
         assert!(keys.contains(&"app"), "Should have 'app' from attribute");
         // No errors
-        assert!(
-            !events.iter().any(|e| matches!(e, Event::Error { .. })),
-            "Dotted path with attributes value should not have errors"
-        );
+        assert_parse_errors(r#"selector.matchLabels app>web"#);
     }
 
     // parser[verify entry.path]
@@ -3641,10 +3531,7 @@ mod tests {
             "Value should be 'example.com' as a single scalar"
         );
         // No errors
-        assert!(
-            !events.iter().any(|e| matches!(e, Event::Error { .. })),
-            "Dot in value should not cause errors"
-        );
+        assert_parse_errors(r#"key example.com"#);
     }
 
     // parser[verify entry.path.sibling]
@@ -3680,26 +3567,13 @@ foo.baz value3"#,
     #[test]
     fn test_reopen_closed_path_error() {
         // Can't reopen a path after moving to a sibling
-        let events = parse("foo.bar {}\nfoo.baz {}\nfoo.bar.x value");
-        // Should have a reopen error
-        let errors: Vec<_> = events
-            .iter()
-            .filter(|e| matches!(e, Event::Error { .. }))
-            .collect();
-        assert_eq!(
-            errors.len(),
-            1,
-            "Should have exactly one error for reopening closed path"
-        );
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::ReopenedPath { .. },
-                    ..
-                }
-            )),
-            "Error should be ReopenedPath"
+        assert_parse_errors(
+            r#"
+foo.bar {}
+foo.baz {}
+foo.bar.x value
+    ^^^ ReopenedPath
+"#,
         );
     }
 
@@ -3707,38 +3581,27 @@ foo.baz value3"#,
     #[test]
     fn test_reopen_nested_closed_path_error() {
         // Can't reopen a nested path after moving to a higher-level sibling
-        let events = parse("a.b.c {}\na.b.d {}\na.x {}\na.b.e {}");
-        // Should have a reopen error for a.b
-        let errors: Vec<_> = events
-            .iter()
-            .filter(|e| {
-                matches!(
-                    e,
-                    Event::Error {
-                        kind: ParseErrorKind::ReopenedPath { .. },
-                        ..
-                    }
-                )
-            })
-            .collect();
-        assert_eq!(errors.len(), 1, "Should have exactly one reopen error");
+        assert_parse_errors(
+            r#"
+a.b.c {}
+a.b.d {}
+a.x {}
+a.b.e {}
+  ^^^ ReopenedPath
+"#,
+        );
     }
 
     // parser[verify entry.path.reopen]
     #[test]
     fn test_nest_into_scalar_error() {
         // Can't nest into a path that has a scalar value
-        let events = parse("a.b value\na.b.c deep");
-        // Should have a nest-into-terminal error
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::NestIntoTerminal { .. },
-                    ..
-                }
-            )),
-            "Should have NestIntoTerminal error"
+        assert_parse_errors(
+            r#"
+a.b value
+a.b.c deep
+^ NestIntoTerminal
+"#,
         );
     }
 
@@ -3746,10 +3609,9 @@ foo.baz value3"#,
     #[test]
     fn test_different_top_level_paths_ok() {
         // Different top-level paths don't conflict
-        let events = parse("server.host localhost\ndatabase.port 5432");
-        assert!(
-            !events.iter().any(|e| matches!(e, Event::Error { .. })),
-            "Different top-level paths should not conflict"
+        assert_parse_errors(
+            r#"server.host localhost
+database.port 5432"#,
         );
     }
 
@@ -3757,16 +3619,11 @@ foo.baz value3"#,
     #[test]
     fn test_bare_key_requires_whitespace_before_brace() {
         // `key{}` without whitespace should be an error
-        let events = parse("config{}");
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
-                    ..
-                }
-            )),
-            "config{{}} without whitespace should error"
+        assert_parse_errors(
+            r#"
+config{}
+     ^ MissingWhitespaceBeforeBlock
+"#,
         );
     }
 
@@ -3774,16 +3631,11 @@ foo.baz value3"#,
     #[test]
     fn test_bare_key_requires_whitespace_before_paren() {
         // `key()` without whitespace should be an error
-        let events = parse("items(1 2 3)");
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
-                    ..
-                }
-            )),
-            "items() without whitespace should error"
+        assert_parse_errors(
+            r#"
+items(1 2 3)
+     ^ MissingWhitespaceBeforeBlock
+"#,
         );
     }
 
