@@ -1779,7 +1779,7 @@ impl<'src> Parser2<'src> {
         let (first_span, first_segment) = segments[0].clone();
 
         if segments.len() == 1 {
-            // Not actually dotted, just a regular key
+            // Not actually dotted, just a regular key - use emit_key for duplicate check
             self.state = State::AfterBareKey {
                 key_span: first_span,
             };
@@ -1792,6 +1792,8 @@ impl<'src> Parser2<'src> {
         }
 
         // Multiple segments - emit first key and ObjectStart, then continue
+        // Don't do duplicate key checking for dotted path segments -
+        // path_state handles the validation for dotted paths
         self.event_queue.push_back(Event::ObjectStart {
             span: first_span,
             separator: Separator::Newline,
@@ -1803,12 +1805,13 @@ impl<'src> Parser2<'src> {
             depth: 1,
         };
 
-        Some(self.emit_key(
-            first_span,
-            None,
-            Some(Cow::Owned(first_segment)),
-            ScalarKind::Bare,
-        ))
+        // Use plain Key event - no duplicate checking for dotted path segments
+        Some(Event::Key {
+            span: first_span,
+            tag: None,
+            payload: Some(Cow::Owned(first_segment)),
+            kind: ScalarKind::Bare,
+        })
     }
 
     fn step_emit_dotted_path(
@@ -1832,7 +1835,13 @@ impl<'src> Parser2<'src> {
                 path,
                 path_span,
             };
-            Some(self.emit_key(span, None, Some(Cow::Owned(segment)), ScalarKind::Bare))
+            // No duplicate checking - path_state handles dotted path validation
+            Some(Event::Key {
+                span,
+                tag: None,
+                payload: Some(Cow::Owned(segment)),
+                kind: ScalarKind::Bare,
+            })
         } else {
             // Not last - emit key, ObjectStart, and continue
             self.event_queue.push_back(Event::ObjectStart {
@@ -1844,7 +1853,13 @@ impl<'src> Parser2<'src> {
                 current_idx: current_idx + 1,
                 depth: depth + 1,
             };
-            Some(self.emit_key(span, None, Some(Cow::Owned(segment)), ScalarKind::Bare))
+            // No duplicate checking - path_state handles dotted path validation
+            Some(Event::Key {
+                span,
+                tag: None,
+                payload: Some(Cow::Owned(segment)),
+                kind: ScalarKind::Bare,
+            })
         }
     }
 
