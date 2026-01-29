@@ -1,4 +1,12 @@
 //! Event-based parser for Styx.
+//!
+//! ⚠️ **DEPRECATED** ⚠️
+//!
+//! This callback-based parser is on its way out. Do not use it for new code.
+//! Use [`Parser2`](crate::Parser2) instead, which provides a pull-based interface.
+//!
+//! Parser2 is the future of styx-parse. This module will be removed once all
+//! consumers have migrated.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -13,6 +21,12 @@ use crate::token::{Token, TokenKind};
 use crate::trace;
 
 /// Event-based parser for Styx documents.
+///
+/// # Deprecated
+///
+/// **This parser is on its way out. Do not use it for new code.**
+/// Use [`Parser2`](crate::Parser2) instead.
+#[deprecated(note = "Use Parser2 instead - this callback-based parser is being phased out")]
 pub struct Parser<'src> {
     lexer: Peekable<LexerIter<'src>>,
 }

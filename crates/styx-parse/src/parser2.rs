@@ -130,6 +130,27 @@ impl<'src> Parser2<'src> {
 
         // Handle root struct start (skip in expression mode)
         if !self.root_started && !self.expr_mode {
+            // Handle comments and doc comments before the root object
+            if let Some(token) = self.peek_token() {
+                trace!(?token.kind, "checking for pre-root comment");
+                match token.kind {
+                    TokenKind::LineComment => {
+                        let token = self.next_token();
+                        trace!("emitting pre-root Comment");
+                        return Some(Event::Comment {
+                            span: token.span,
+                            text: token.text,
+                        });
+                    }
+                    TokenKind::DocComment => {
+                        let token = self.next_token();
+                        self.pending_doc.push((token.span, token.text));
+                        return self.next_event();
+                    }
+                    _ => {}
+                }
+            }
+
             self.root_started = true;
 
             // Check if document starts with explicit `{` - if so, that's the root object
@@ -234,6 +255,14 @@ impl<'src> Parser2<'src> {
                     let token = self.next_token();
                     self.pending_doc.push((token.span, token.text));
                     return self.next_event();
+                }
+                TokenKind::LineComment => {
+                    // Emit line comments as Comment events
+                    let token = self.next_token();
+                    return Some(Event::Comment {
+                        span: token.span,
+                        text: token.text,
+                    });
                 }
                 _ => {}
             }
@@ -509,10 +538,34 @@ impl<'src> Parser2<'src> {
                     && next.span.start == at_token.span.end
                 {
                     let name_token = self.next_token();
-                    let tag_name = name_token.text;
-                    let name_end = name_token.span.end;
+                    let full_text = name_token.text;
+
+                    // The bare scalar may contain @ which is not valid in tag names.
+                    // We need to split at the first @ if present.
+                    let tag_name_len = full_text.find('@').unwrap_or(full_text.len());
+                    let tag_name = &full_text[..tag_name_len];
+                    let name_span = Span::new(
+                        name_token.span.start,
+                        name_token.span.start + tag_name_len as u32,
+                    );
+                    let name_end = name_span.end;
+
+                    // Check if there was a trailing @ in the token
+                    let has_trailing_at = tag_name_len < full_text.len();
+
+                    // Validate tag name
+                    let invalid_tag_name =
+                        tag_name.is_empty() || !Self::is_valid_tag_name(tag_name);
 
                     // Check what follows the tag name
+                    if has_trailing_at {
+                        // @foo@ as a key - error (tag with payload not valid as key)
+                        return Some(Event::Error {
+                            span: Span::new(at_token.span.start, name_end + 1),
+                            kind: ParseErrorKind::InvalidKey,
+                        });
+                    }
+
                     if let Some(after) = self.peek_token()
                         && after.span.start == name_end
                     {
@@ -548,6 +601,14 @@ impl<'src> Parser2<'src> {
                             .push(Event::DocComment { span: *span, text });
                     }
 
+                    // Emit InvalidTagName error if needed
+                    if invalid_tag_name {
+                        self.peeked_events.push(Event::Error {
+                            span: name_span,
+                            kind: ParseErrorKind::InvalidTagName,
+                        });
+                    }
+
                     // Queue Key after EntryStart
                     self.peeked_events.push(Event::Key {
                         span: Span::new(at_token.span.start, name_end),
@@ -579,6 +640,50 @@ impl<'src> Parser2<'src> {
                 });
 
                 trace!("parse_object_entry: unit EntryStart");
+                return Some(Event::EntryStart);
+            }
+            TokenKind::HeredocStart => {
+                // Heredocs are not valid as keys - emit error with just the start span
+                let start_token = self.next_token();
+                let start_span = start_token.span;
+
+                // Consume the heredoc content and end
+                loop {
+                    let next = self.next_token();
+                    match next.kind {
+                        TokenKind::HeredocContent => continue,
+                        TokenKind::HeredocEnd | TokenKind::Eof => break,
+                        _ => break,
+                    }
+                }
+
+                return Some(Event::Error {
+                    span: start_span,
+                    kind: ParseErrorKind::InvalidKey,
+                });
+            }
+            TokenKind::RawScalar => {
+                // Raw scalars are valid as keys - treat like quoted
+                let key_token = self.next_token();
+                let key = Self::strip_raw_delimiters(key_token.text);
+
+                self.expecting_value = true;
+                self.entry_atom_count = 1;
+
+                let doc_comments = std::mem::take(&mut self.pending_doc);
+                for (span, text) in &doc_comments {
+                    self.peeked_events
+                        .push(Event::DocComment { span: *span, text });
+                }
+
+                self.peeked_events.push(Event::Key {
+                    span: key_token.span,
+                    tag: None,
+                    payload: Some(Cow::Borrowed(key)),
+                    kind: ScalarKind::Raw,
+                });
+
+                trace!("parse_object_entry: raw EntryStart");
                 return Some(Event::EntryStart);
             }
             _ => {}
@@ -660,22 +765,46 @@ impl<'src> Parser2<'src> {
             && next.span.start == at_span_end
         {
             let name_token = self.next_token();
-            let tag_name = name_token.text;
+            let full_text = name_token.text;
 
-            // Check for payload
+            // The bare scalar may contain @ which is not valid in tag names.
+            // We need to split at the first @ if present.
+            let tag_name_len = full_text.find('@').unwrap_or(full_text.len());
+            let tag_name = &full_text[..tag_name_len];
+            let name_span = Span::new(
+                name_token.span.start,
+                name_token.span.start + tag_name_len as u32,
+            );
+            let name_end = name_span.end;
+
+            // Check if the tag name itself contained @
+            let has_trailing_at = tag_name_len < full_text.len();
+
+            // Validate tag name: must match [A-Za-z_][A-Za-z0-9_-]*
+            // Note: dots are NOT allowed in tag names
+            let invalid_tag_name = tag_name.is_empty() || !Self::is_valid_tag_name(tag_name);
+            if invalid_tag_name {
+                self.peeked_events.push(Event::Error {
+                    span: name_span,
+                    kind: ParseErrorKind::InvalidTagName,
+                });
+            }
+
+            if has_trailing_at {
+                // @foo@ - tag with explicit unit payload
+                // The @ is already consumed as part of the bare scalar
+                let at_span = Span::new(name_end, name_end + 1);
+                self.peeked_events.push(Event::Unit { span: at_span });
+                self.peeked_events.push(Event::TagEnd);
+                return Event::TagStart {
+                    span: Span::new(at_span_end - 1, name_end + 1),
+                    name: tag_name,
+                };
+            }
+
+            // Check for payload (next token immediately after tag name)
             if let Some(next) = self.peek_token() {
-                if next.kind == TokenKind::At && next.span.start == name_token.span.end {
-                    // @foo@ - tag with explicit unit payload
-                    self.next_token();
-                    self.peeked_events.push(Event::Unit {
-                        span: name_token.span,
-                    });
-                    self.peeked_events.push(Event::TagEnd);
-                    return Event::TagStart {
-                        span: Span::new(at_span_end - 1, name_token.span.end + 1),
-                        name: tag_name,
-                    };
-                } else if next.kind == TokenKind::LBrace && next.span.start == name_token.span.end {
+                if next.kind == TokenKind::LBrace && next.span.start == name_end {
                     // @foo{...} - tag with object payload
                     let brace_token = self.next_token();
                     self.stack.push(ContextState::Object { implicit: false });
@@ -684,10 +813,10 @@ impl<'src> Parser2<'src> {
                         separator: Separator::Comma,
                     });
                     return Event::TagStart {
-                        span: Span::new(at_span_end - 1, name_token.span.end),
+                        span: Span::new(at_span_end - 1, name_end),
                         name: tag_name,
                     };
-                } else if next.kind == TokenKind::LParen && next.span.start == name_token.span.end {
+                } else if next.kind == TokenKind::LParen && next.span.start == name_end {
                     // @foo(...) - tag with sequence payload
                     let paren_token = self.next_token();
                     self.stack.push(ContextState::Sequence);
@@ -695,19 +824,45 @@ impl<'src> Parser2<'src> {
                         span: paren_token.span,
                     });
                     return Event::TagStart {
-                        span: Span::new(at_span_end - 1, name_token.span.end),
+                        span: Span::new(at_span_end - 1, name_end),
+                        name: tag_name,
+                    };
+                } else if next.kind == TokenKind::QuotedScalar && next.span.start == name_end {
+                    // @foo"bar" - tag with quoted string payload
+                    let scalar_token = self.next_token();
+                    let value = self.unescape_quoted(scalar_token.text);
+                    self.peeked_events.push(Event::Scalar {
+                        span: scalar_token.span,
+                        value,
+                        kind: ScalarKind::Quoted,
+                    });
+                    self.peeked_events.push(Event::TagEnd);
+                    return Event::TagStart {
+                        span: Span::new(at_span_end - 1, name_end),
+                        name: tag_name,
+                    };
+                } else if next.kind == TokenKind::RawScalar && next.span.start == name_end {
+                    // @foo r#"bar"# - tag with raw string payload
+                    let scalar_token = self.next_token();
+                    let value = Self::strip_raw_delimiters(scalar_token.text);
+                    self.peeked_events.push(Event::Scalar {
+                        span: scalar_token.span,
+                        value: Cow::Borrowed(value),
+                        kind: ScalarKind::Raw,
+                    });
+                    self.peeked_events.push(Event::TagEnd);
+                    return Event::TagStart {
+                        span: Span::new(at_span_end - 1, name_end),
                         name: tag_name,
                     };
                 }
             }
 
             // @foo - named tag with implicit unit payload
-            self.peeked_events.push(Event::Unit {
-                span: name_token.span,
-            });
+            self.peeked_events.push(Event::Unit { span: name_span });
             self.peeked_events.push(Event::TagEnd);
             return Event::TagStart {
-                span: Span::new(at_span_end - 1, name_token.span.end),
+                span: Span::new(at_span_end - 1, name_end),
                 name: tag_name,
             };
         }
@@ -784,13 +939,9 @@ impl<'src> Parser2<'src> {
         if self.peeked_token.is_none() {
             loop {
                 let token = self.lexer.next_token();
-                // Skip whitespace and line comments (but not doc comments)
+                // Skip whitespace only (not comments!)
                 match token.kind {
-                    TokenKind::Whitespace | TokenKind::LineComment => continue,
-                    TokenKind::Eof => {
-                        self.peeked_token = Some(token);
-                        break;
-                    }
+                    TokenKind::Whitespace => continue,
                     _ => {
                         self.peeked_token = Some(token);
                         break;
@@ -822,7 +973,7 @@ impl<'src> Parser2<'src> {
         loop {
             let token = self.lexer.next_token();
             match token.kind {
-                TokenKind::Whitespace | TokenKind::LineComment => continue,
+                TokenKind::Whitespace => continue,
                 _ => {
                     self.current_span = Some(token.span);
                     return token;
@@ -940,6 +1091,22 @@ impl<'src> Parser2<'src> {
         }
 
         Cow::Owned(result)
+    }
+
+    /// Check if a tag name is valid.
+    /// Must match pattern: [A-Za-z_][A-Za-z0-9_-]*
+    /// Note: dots are NOT allowed in tag names (they are path separators in keys).
+    fn is_valid_tag_name(name: &str) -> bool {
+        let mut chars = name.chars();
+
+        // First char: letter or underscore
+        match chars.next() {
+            Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+            _ => return false,
+        }
+
+        // Rest: alphanumeric, underscore, or hyphen (no dots!)
+        chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     }
 
     /// Strip raw string delimiters.

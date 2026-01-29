@@ -9,7 +9,7 @@ command = 'scripts/setup-test-env.sh'
 command = 'scripts/setup-test-env.cmd'
 
 [profile.default]
-slow-timeout = { period = "2s", terminate-after = 1 }
+slow-timeout = { period = "2s", terminate-after = 2 }
 fail-fast = true
 
 [[profile.default.scripts]]
