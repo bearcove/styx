@@ -1,7 +1,7 @@
 //! Pull-based streaming parser for Styx.
 //!
-//! State machine design: consume token, transition state, emit event.
-//! No lookahead gymnastics, no peeked token hell.
+//! State machine: consume token, transition state, emit event.
+//! No peeking. No backtracking. No unread.
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
@@ -14,27 +14,45 @@ use crate::token::{Token, TokenKind};
 #[allow(unused_imports)]
 use crate::trace;
 
-/// Parser state - stores spans/positions, NOT string references.
+/// Parser state. Stores spans, not string references.
 #[derive(Debug, Clone, PartialEq)]
 enum State {
     Start,
     BeforeRoot,
-    ExpectingEntry,
-    /// After bare key - check for `>` (attribute syntax).
+    ExpectEntry,
+    /// After bare key - next token decides: `>` = attribute, else = value.
     AfterBareKey {
         key_span: Span,
     },
-    /// After any key - expecting value.
+    /// After `@` in key position - next token is tag name or whitespace (unit key).
+    AfterAtKey {
+        at_span: Span,
+    },
+    /// After key (any kind) - expecting value.
     AfterKey {
         key_span: Span,
     },
-    /// After value - check for TooManyAtoms.
-    AfterValue,
-    /// In attribute chain.
-    InAttributeChain {
-        obj_start_span: Span,
+    /// After `key>` - expecting attribute value.
+    AfterGt {
+        key_span: Span,
+        in_chain: bool,
     },
-    ExpectingSequenceElement,
+    /// After attribute value - check for more attributes.
+    MaybeMoreAttr {
+        obj_span: Span,
+    },
+    /// In attr chain, just saw bare key - next token decides: `>` = more attr, else = TooManyAtoms.
+    AfterBareKeyInAttr {
+        key_span: Span,
+        obj_span: Span,
+    },
+    /// Saw bare scalar in value position - check if followed by `>` (attribute chain start).
+    AfterBareValue {
+        value_span: Span,
+    },
+    /// After value - check for TooManyAtoms or boundary.
+    AfterValue,
+    ExpectSeqElem,
     Done,
 }
 
@@ -42,10 +60,9 @@ enum State {
 enum Context {
     Object { implicit: bool },
     Sequence,
-    AttributeObject,
+    AttrObject,
 }
 
-/// Pull-based streaming parser for Styx documents.
 pub struct Parser2<'src> {
     input: &'src str,
     lexer: Lexer<'src>,
@@ -54,8 +71,6 @@ pub struct Parser2<'src> {
     event_queue: VecDeque<Event<'src>>,
     pending_doc: Vec<(Span, &'src str)>,
     expr_mode: bool,
-    /// Buffered tokens for "unread" functionality.
-    buffered_tokens: VecDeque<Token<'src>>,
 }
 
 impl<'src> Parser2<'src> {
@@ -68,7 +83,6 @@ impl<'src> Parser2<'src> {
             event_queue: VecDeque::new(),
             pending_doc: Vec::new(),
             expr_mode: false,
-            buffered_tokens: VecDeque::new(),
         }
     }
 
@@ -81,12 +95,10 @@ impl<'src> Parser2<'src> {
             event_queue: VecDeque::new(),
             pending_doc: Vec::new(),
             expr_mode: true,
-            buffered_tokens: VecDeque::new(),
         }
     }
 
     pub fn next_event(&mut self) -> Option<Event<'src>> {
-        // Drain queue first
         if let Some(ev) = self.event_queue.pop_front() {
             return Some(ev);
         }
@@ -113,24 +125,25 @@ impl<'src> Parser2<'src> {
                 Some(Event::DocumentStart)
             }
             State::BeforeRoot => self.step_before_root(),
-            State::ExpectingEntry => self.step_expecting_entry(),
+            State::ExpectEntry => self.step_expect_entry(),
             State::AfterBareKey { key_span } => self.step_after_bare_key(key_span),
+            State::AfterAtKey { at_span } => self.step_after_at_key(at_span),
             State::AfterKey { key_span } => self.step_after_key(key_span),
-            State::AfterValue => self.step_after_value(),
-            State::InAttributeChain { obj_start_span } => {
-                self.step_in_attribute_chain(obj_start_span)
+            State::AfterGt { key_span, in_chain } => self.step_after_gt(key_span, in_chain),
+            State::MaybeMoreAttr { obj_span } => self.step_maybe_more_attr(obj_span),
+            State::AfterBareKeyInAttr { key_span, obj_span } => {
+                self.step_after_bare_key_in_attr(key_span, obj_span)
             }
-            State::ExpectingSequenceElement => self.step_expecting_sequence_element(),
+            State::AfterBareValue { value_span } => self.step_after_bare_value(value_span),
+            State::AfterValue => self.step_after_value(),
+            State::ExpectSeqElem => self.step_expect_seq_elem(),
             State::Done => None,
         }
     }
 
-    // === Token access ===
+    // === Token consumption ===
 
     fn next_token(&mut self) -> Token<'src> {
-        if let Some(t) = self.buffered_tokens.pop_front() {
-            return t;
-        }
         loop {
             let t = self.lexer.next_token();
             if t.kind != TokenKind::Whitespace {
@@ -146,10 +159,6 @@ impl<'src> Parser2<'src> {
                 return t;
             }
         }
-    }
-
-    fn unread(&mut self, t: Token<'src>) {
-        self.buffered_tokens.push_front(t);
     }
 
     fn span_text(&self, span: Span) -> &'src str {
@@ -171,14 +180,13 @@ impl<'src> Parser2<'src> {
                 }
                 self.event_queue.push_back(Event::DocumentEnd);
                 self.state = State::Done;
-                if self.expr_mode {
-                    return Some(Event::DocumentEnd);
-                }
                 Some(Event::ObjectStart {
                     span: Span::new(0, 0),
                     separator: Separator::Newline,
                 })
             }
+
+            TokenKind::Newline => None,
 
             TokenKind::LineComment => Some(Event::Comment {
                 span: t.span,
@@ -190,22 +198,63 @@ impl<'src> Parser2<'src> {
                 None
             }
 
-            TokenKind::Newline => None,
-
             TokenKind::LBrace => {
                 self.context_stack.push(Context::Object { implicit: false });
-                self.state = State::ExpectingEntry;
+                self.state = State::ExpectEntry;
                 Some(Event::ObjectStart {
                     span: t.span,
                     separator: Separator::Comma,
                 })
             }
 
-            _ => {
-                // Implicit root
+            // Implicit root
+            TokenKind::BareScalar => {
                 self.context_stack.push(Context::Object { implicit: true });
-                self.unread(t);
-                self.state = State::ExpectingEntry;
+                self.emit_pending_docs();
+                self.event_queue.push_back(Event::Key {
+                    span: t.span,
+                    tag: None,
+                    payload: Some(Cow::Borrowed(t.text)),
+                    kind: ScalarKind::Bare,
+                });
+                self.state = State::AfterBareKey { key_span: t.span };
+                self.event_queue.push_back(Event::EntryStart);
+                Some(Event::ObjectStart {
+                    span: Span::new(0, 0),
+                    separator: Separator::Newline,
+                })
+            }
+
+            TokenKind::QuotedScalar => {
+                self.context_stack.push(Context::Object { implicit: true });
+                self.emit_pending_docs();
+                self.event_queue.push_back(Event::Key {
+                    span: t.span,
+                    tag: None,
+                    payload: Some(self.unescape_quoted(t.text)),
+                    kind: ScalarKind::Quoted,
+                });
+                self.state = State::AfterKey { key_span: t.span };
+                self.event_queue.push_back(Event::EntryStart);
+                Some(Event::ObjectStart {
+                    span: Span::new(0, 0),
+                    separator: Separator::Newline,
+                })
+            }
+
+            TokenKind::At => {
+                self.context_stack.push(Context::Object { implicit: true });
+                self.state = State::AfterAtKey { at_span: t.span };
+                self.event_queue.push_back(Event::EntryStart);
+                Some(Event::ObjectStart {
+                    span: Span::new(0, 0),
+                    separator: Separator::Newline,
+                })
+            }
+
+            _ => {
+                self.context_stack.push(Context::Object { implicit: true });
+                self.state = State::ExpectEntry;
                 Some(Event::ObjectStart {
                     span: Span::new(0, 0),
                     separator: Separator::Newline,
@@ -214,11 +263,11 @@ impl<'src> Parser2<'src> {
         }
     }
 
-    fn step_expecting_entry(&mut self) -> Option<Event<'src>> {
+    fn step_expect_entry(&mut self) -> Option<Event<'src>> {
         let t = self.next_token_skip_newlines();
 
         match t.kind {
-            TokenKind::Eof => self.close_contexts_at_eof(),
+            TokenKind::Eof => self.close_at_eof(),
 
             TokenKind::RBrace => self.handle_rbrace(t.span),
 
@@ -253,11 +302,10 @@ impl<'src> Parser2<'src> {
 
             TokenKind::QuotedScalar => {
                 self.emit_pending_docs();
-                let val = self.unescape_quoted(t.text);
                 self.event_queue.push_back(Event::Key {
                     span: t.span,
                     tag: None,
-                    payload: Some(val),
+                    payload: Some(self.unescape_quoted(t.text)),
                     kind: ScalarKind::Quoted,
                 });
                 self.state = State::AfterKey { key_span: t.span };
@@ -266,18 +314,21 @@ impl<'src> Parser2<'src> {
 
             TokenKind::RawScalar => {
                 self.emit_pending_docs();
-                let val = Self::strip_raw_delimiters(t.text);
                 self.event_queue.push_back(Event::Key {
                     span: t.span,
                     tag: None,
-                    payload: Some(Cow::Borrowed(val)),
+                    payload: Some(Cow::Borrowed(Self::strip_raw_delimiters(t.text))),
                     kind: ScalarKind::Raw,
                 });
                 self.state = State::AfterKey { key_span: t.span };
                 Some(Event::EntryStart)
             }
 
-            TokenKind::At => self.handle_at_as_key(t.span),
+            TokenKind::At => {
+                self.emit_pending_docs();
+                self.state = State::AfterAtKey { at_span: t.span };
+                Some(Event::EntryStart)
+            }
 
             TokenKind::HeredocStart => {
                 self.skip_heredoc();
@@ -297,36 +348,29 @@ impl<'src> Parser2<'src> {
     fn step_after_bare_key(&mut self, key_span: Span) -> Option<Event<'src>> {
         let t = self.next_token();
 
-        // Check for attribute syntax: immediate `>`
-        if t.kind == TokenKind::Gt && t.span.start == key_span.end {
-            return self.parse_attribute_value(key_span);
-        }
-
-        // Not attribute - continue as normal key
-        self.unread(t);
-        self.state = State::AfterKey { key_span };
-        None
-    }
-
-    fn step_after_key(&mut self, key_span: Span) -> Option<Event<'src>> {
-        let t = self.next_token();
-
         match t.kind {
+            TokenKind::Gt if t.span.start == key_span.end => {
+                // Attribute syntax: key>value
+                self.state = State::AfterGt {
+                    key_span,
+                    in_chain: false,
+                };
+                None
+            }
+
+            // Not attribute - handle as normal value position
             TokenKind::Newline
             | TokenKind::Eof
             | TokenKind::RBrace
             | TokenKind::RParen
             | TokenKind::Comma => {
-                // Unit value
                 self.event_queue.push_back(Event::Unit { span: key_span });
                 self.event_queue.push_back(Event::EntryEnd);
-                self.unread(t);
-                self.state = State::ExpectingEntry;
-                None
+                self.state = State::ExpectEntry;
+                self.handle_boundary_token(t)
             }
 
             TokenKind::LBrace => {
-                // Check MissingWhitespaceBeforeBlock
                 if t.span.start == key_span.end {
                     self.event_queue.push_back(Event::Error {
                         span: t.span,
@@ -334,7 +378,7 @@ impl<'src> Parser2<'src> {
                     });
                 }
                 self.context_stack.push(Context::Object { implicit: false });
-                self.state = State::ExpectingEntry;
+                self.state = State::ExpectEntry;
                 Some(Event::ObjectStart {
                     span: t.span,
                     separator: Separator::Comma,
@@ -349,24 +393,205 @@ impl<'src> Parser2<'src> {
                     });
                 }
                 self.context_stack.push(Context::Sequence);
-                self.state = State::ExpectingSequenceElement;
+                self.state = State::ExpectSeqElem;
                 Some(Event::SequenceStart { span: t.span })
             }
 
             TokenKind::At => {
-                let ev = self.parse_tag_value(t.span);
+                let ev = self.parse_tag_value(t);
                 self.state = State::AfterValue;
                 Some(ev)
             }
 
             TokenKind::BareScalar => {
-                // Check for attribute syntax in value position
-                let next = self.next_token();
-                if next.kind == TokenKind::Gt && next.span.start == t.span.end {
-                    // key value>... is attribute syntax as value
-                    return self.parse_attribute_chain_as_value(t.span);
-                }
-                self.unread(next);
+                // Could be simple value or start of attribute chain
+                self.state = State::AfterBareValue { value_span: t.span };
+                Some(Event::Scalar {
+                    span: t.span,
+                    value: Cow::Borrowed(t.text),
+                    kind: ScalarKind::Bare,
+                })
+            }
+
+            TokenKind::QuotedScalar => {
+                self.state = State::AfterValue;
+                Some(Event::Scalar {
+                    span: t.span,
+                    value: self.unescape_quoted(t.text),
+                    kind: ScalarKind::Quoted,
+                })
+            }
+
+            TokenKind::RawScalar => {
+                self.state = State::AfterValue;
+                Some(Event::Scalar {
+                    span: t.span,
+                    value: Cow::Borrowed(Self::strip_raw_delimiters(t.text)),
+                    kind: ScalarKind::Raw,
+                })
+            }
+
+            TokenKind::HeredocStart => {
+                let ev = self.parse_heredoc(t.span);
+                self.state = State::AfterValue;
+                Some(ev)
+            }
+
+            TokenKind::LineComment => {
+                self.event_queue.push_back(Event::Unit { span: key_span });
+                self.event_queue.push_back(Event::EntryEnd);
+                self.state = State::ExpectEntry;
+                Some(Event::Comment {
+                    span: t.span,
+                    text: t.text,
+                })
+            }
+
+            _ => {
+                self.state = State::ExpectEntry;
+                Some(Event::Error {
+                    span: t.span,
+                    kind: ParseErrorKind::UnexpectedToken,
+                })
+            }
+        }
+    }
+
+    fn step_after_at_key(&mut self, at_span: Span) -> Option<Event<'src>> {
+        let t = self.next_token();
+
+        if t.kind == TokenKind::BareScalar && t.span.start == at_span.end {
+            // @tagname
+            let (tag_name, name_end) = self.extract_tag_name(t.text, t.span.start);
+
+            // Check for invalid key forms
+            let has_trailing_at = name_end < t.span.end;
+            if has_trailing_at {
+                self.state = State::ExpectEntry;
+                return Some(Event::Error {
+                    span: Span::new(at_span.start, name_end + 1),
+                    kind: ParseErrorKind::InvalidKey,
+                });
+            }
+
+            // Validate tag name
+            if tag_name.is_empty() || !Self::is_valid_tag_name(tag_name) {
+                self.event_queue.push_back(Event::Error {
+                    span: Span::new(t.span.start, name_end),
+                    kind: ParseErrorKind::InvalidTagName,
+                });
+            }
+
+            // Skip @schema at implicit root
+            if tag_name == "schema"
+                && self.context_stack.last() == Some(&Context::Object { implicit: true })
+            {
+                self.skip_value();
+                self.pending_doc.clear();
+                self.state = State::ExpectEntry;
+                return None;
+            }
+
+            self.event_queue.push_back(Event::Key {
+                span: Span::new(at_span.start, name_end),
+                tag: Some(tag_name),
+                payload: None,
+                kind: ScalarKind::Bare,
+            });
+            self.state = State::AfterKey {
+                key_span: Span::new(at_span.start, name_end),
+            };
+            return None;
+        }
+
+        // @ alone = unit key
+        self.event_queue.push_back(Event::Key {
+            span: at_span,
+            tag: None,
+            payload: None,
+            kind: ScalarKind::Bare,
+        });
+
+        // Now handle the token we got as value position
+        match t.kind {
+            TokenKind::Newline
+            | TokenKind::Eof
+            | TokenKind::RBrace
+            | TokenKind::RParen
+            | TokenKind::Comma => {
+                self.event_queue.push_back(Event::Unit { span: at_span });
+                self.event_queue.push_back(Event::EntryEnd);
+                self.state = State::ExpectEntry;
+                self.handle_boundary_token(t)
+            }
+
+            TokenKind::BareScalar => {
+                self.state = State::AfterValue;
+                Some(Event::Scalar {
+                    span: t.span,
+                    value: Cow::Borrowed(t.text),
+                    kind: ScalarKind::Bare,
+                })
+            }
+
+            TokenKind::QuotedScalar => {
+                self.state = State::AfterValue;
+                Some(Event::Scalar {
+                    span: t.span,
+                    value: self.unescape_quoted(t.text),
+                    kind: ScalarKind::Quoted,
+                })
+            }
+
+            _ => {
+                self.event_queue.push_back(Event::Unit { span: at_span });
+                self.event_queue.push_back(Event::EntryEnd);
+                self.state = State::ExpectEntry;
+                Some(Event::Error {
+                    span: t.span,
+                    kind: ParseErrorKind::UnexpectedToken,
+                })
+            }
+        }
+    }
+
+    fn step_after_key(&mut self, key_span: Span) -> Option<Event<'src>> {
+        let t = self.next_token();
+
+        match t.kind {
+            TokenKind::Newline
+            | TokenKind::Eof
+            | TokenKind::RBrace
+            | TokenKind::RParen
+            | TokenKind::Comma => {
+                self.event_queue.push_back(Event::Unit { span: key_span });
+                self.event_queue.push_back(Event::EntryEnd);
+                self.state = State::ExpectEntry;
+                self.handle_boundary_token(t)
+            }
+
+            TokenKind::LBrace => {
+                self.context_stack.push(Context::Object { implicit: false });
+                self.state = State::ExpectEntry;
+                Some(Event::ObjectStart {
+                    span: t.span,
+                    separator: Separator::Comma,
+                })
+            }
+
+            TokenKind::LParen => {
+                self.context_stack.push(Context::Sequence);
+                self.state = State::ExpectSeqElem;
+                Some(Event::SequenceStart { span: t.span })
+            }
+
+            TokenKind::At => {
+                let ev = self.parse_tag_value(t);
+                self.state = State::AfterValue;
+                Some(ev)
+            }
+
+            TokenKind::BareScalar => {
                 self.state = State::AfterValue;
                 Some(Event::Scalar {
                     span: t.span,
@@ -400,10 +625,9 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::LineComment => {
-                // Comment after key = unit value
                 self.event_queue.push_back(Event::Unit { span: key_span });
                 self.event_queue.push_back(Event::EntryEnd);
-                self.state = State::ExpectingEntry;
+                self.state = State::ExpectEntry;
                 Some(Event::Comment {
                     span: t.span,
                     text: t.text,
@@ -413,11 +637,325 @@ impl<'src> Parser2<'src> {
             _ => {
                 self.event_queue.push_back(Event::Unit { span: key_span });
                 self.event_queue.push_back(Event::EntryEnd);
-                self.state = State::ExpectingEntry;
+                self.state = State::ExpectEntry;
                 Some(Event::Error {
                     span: t.span,
                     kind: ParseErrorKind::UnexpectedToken,
                 })
+            }
+        }
+    }
+
+    fn step_after_gt(&mut self, key_span: Span, in_chain: bool) -> Option<Event<'src>> {
+        // We just saw `key>`, now we expect the value
+        let t = self.next_token();
+
+        match t.kind {
+            TokenKind::BareScalar => {
+                // Emit inner entry for this attribute
+                self.event_queue.push_back(Event::EntryStart);
+                self.event_queue.push_back(Event::Key {
+                    span: key_span,
+                    tag: None,
+                    payload: Some(Cow::Borrowed(self.span_text(key_span))),
+                    kind: ScalarKind::Bare,
+                });
+                self.event_queue.push_back(Event::Scalar {
+                    span: t.span,
+                    value: Cow::Borrowed(t.text),
+                    kind: ScalarKind::Bare,
+                });
+                self.event_queue.push_back(Event::EntryEnd);
+
+                if !in_chain {
+                    // First attribute - we need to emit ObjectStart
+                    self.context_stack.push(Context::AttrObject);
+                    self.state = State::MaybeMoreAttr { obj_span: key_span };
+                    return Some(Event::ObjectStart {
+                        span: key_span,
+                        separator: Separator::Comma,
+                    });
+                }
+
+                self.state = State::MaybeMoreAttr { obj_span: key_span };
+                None
+            }
+
+            TokenKind::QuotedScalar => {
+                self.event_queue.push_back(Event::EntryStart);
+                self.event_queue.push_back(Event::Key {
+                    span: key_span,
+                    tag: None,
+                    payload: Some(Cow::Borrowed(self.span_text(key_span))),
+                    kind: ScalarKind::Bare,
+                });
+                self.event_queue.push_back(Event::Scalar {
+                    span: t.span,
+                    value: self.unescape_quoted(t.text),
+                    kind: ScalarKind::Quoted,
+                });
+                self.event_queue.push_back(Event::EntryEnd);
+
+                if !in_chain {
+                    self.context_stack.push(Context::AttrObject);
+                    self.state = State::MaybeMoreAttr { obj_span: key_span };
+                    return Some(Event::ObjectStart {
+                        span: key_span,
+                        separator: Separator::Comma,
+                    });
+                }
+
+                self.state = State::MaybeMoreAttr { obj_span: key_span };
+                None
+            }
+
+            TokenKind::RawScalar => {
+                self.event_queue.push_back(Event::EntryStart);
+                self.event_queue.push_back(Event::Key {
+                    span: key_span,
+                    tag: None,
+                    payload: Some(Cow::Borrowed(self.span_text(key_span))),
+                    kind: ScalarKind::Bare,
+                });
+                self.event_queue.push_back(Event::Scalar {
+                    span: t.span,
+                    value: Cow::Borrowed(Self::strip_raw_delimiters(t.text)),
+                    kind: ScalarKind::Raw,
+                });
+                self.event_queue.push_back(Event::EntryEnd);
+
+                if !in_chain {
+                    self.context_stack.push(Context::AttrObject);
+                    self.state = State::MaybeMoreAttr { obj_span: key_span };
+                    return Some(Event::ObjectStart {
+                        span: key_span,
+                        separator: Separator::Comma,
+                    });
+                }
+
+                self.state = State::MaybeMoreAttr { obj_span: key_span };
+                None
+            }
+
+            TokenKind::LBrace => {
+                // key>{...}
+                self.event_queue.push_back(Event::EntryStart);
+                self.event_queue.push_back(Event::Key {
+                    span: key_span,
+                    tag: None,
+                    payload: Some(Cow::Borrowed(self.span_text(key_span))),
+                    kind: ScalarKind::Bare,
+                });
+
+                if !in_chain {
+                    self.context_stack.push(Context::AttrObject);
+                    self.event_queue.push_back(Event::ObjectStart {
+                        span: key_span,
+                        separator: Separator::Comma,
+                    });
+                }
+
+                self.context_stack.push(Context::Object { implicit: false });
+                self.state = State::ExpectEntry;
+                Some(Event::ObjectStart {
+                    span: t.span,
+                    separator: Separator::Comma,
+                })
+            }
+
+            TokenKind::LParen => {
+                // key>(...)
+                self.event_queue.push_back(Event::EntryStart);
+                self.event_queue.push_back(Event::Key {
+                    span: key_span,
+                    tag: None,
+                    payload: Some(Cow::Borrowed(self.span_text(key_span))),
+                    kind: ScalarKind::Bare,
+                });
+
+                if !in_chain {
+                    self.context_stack.push(Context::AttrObject);
+                    self.event_queue.push_back(Event::ObjectStart {
+                        span: key_span,
+                        separator: Separator::Comma,
+                    });
+                }
+
+                self.context_stack.push(Context::Sequence);
+                self.state = State::ExpectSeqElem;
+                Some(Event::SequenceStart { span: t.span })
+            }
+
+            TokenKind::At => {
+                // key>@tag
+                self.event_queue.push_back(Event::EntryStart);
+                self.event_queue.push_back(Event::Key {
+                    span: key_span,
+                    tag: None,
+                    payload: Some(Cow::Borrowed(self.span_text(key_span))),
+                    kind: ScalarKind::Bare,
+                });
+
+                let tag_ev = self.parse_tag_value(t);
+                self.event_queue.push_back(tag_ev);
+                self.event_queue.push_back(Event::EntryEnd);
+
+                if !in_chain {
+                    self.context_stack.push(Context::AttrObject);
+                    self.state = State::MaybeMoreAttr { obj_span: key_span };
+                    return Some(Event::ObjectStart {
+                        span: key_span,
+                        separator: Separator::Comma,
+                    });
+                }
+
+                self.state = State::MaybeMoreAttr { obj_span: key_span };
+                None
+            }
+
+            _ => {
+                self.event_queue.push_back(Event::Error {
+                    span: t.span,
+                    kind: ParseErrorKind::ExpectedValue,
+                });
+                self.event_queue.push_back(Event::EntryEnd);
+                self.state = State::ExpectEntry;
+                None
+            }
+        }
+    }
+
+    fn step_maybe_more_attr(&mut self, obj_span: Span) -> Option<Event<'src>> {
+        let t = self.next_token();
+
+        match t.kind {
+            TokenKind::BareScalar => {
+                // Could be another attribute or TooManyAtoms
+                // Need next token to decide
+                self.state = State::AfterBareKeyInAttr {
+                    key_span: t.span,
+                    obj_span,
+                };
+                None
+            }
+
+            TokenKind::Newline
+            | TokenKind::Eof
+            | TokenKind::RBrace
+            | TokenKind::RParen
+            | TokenKind::Comma => {
+                // End of attribute chain
+                self.close_attr_obj(obj_span);
+                self.handle_boundary_token(t)
+            }
+
+            TokenKind::LineComment => {
+                self.close_attr_obj(obj_span);
+                Some(Event::Comment {
+                    span: t.span,
+                    text: t.text,
+                })
+            }
+
+            _ => {
+                // TooManyAtoms
+                self.event_queue.push_back(Event::Error {
+                    span: t.span,
+                    kind: ParseErrorKind::TooManyAtoms,
+                });
+                let boundary = self.skip_to_boundary();
+                self.close_attr_obj(obj_span);
+                self.handle_boundary_token(boundary)
+            }
+        }
+    }
+
+    fn step_after_bare_key_in_attr(
+        &mut self,
+        key_span: Span,
+        obj_span: Span,
+    ) -> Option<Event<'src>> {
+        let t = self.next_token();
+
+        match t.kind {
+            TokenKind::Gt if t.span.start == key_span.end => {
+                // Another attribute!
+                self.state = State::AfterGt {
+                    key_span,
+                    in_chain: true,
+                };
+                None
+            }
+
+            // Not `>` immediately after - this is TooManyAtoms
+            _ => {
+                self.event_queue.push_back(Event::Error {
+                    span: key_span,
+                    kind: ParseErrorKind::TooManyAtoms,
+                });
+                let boundary = self.skip_to_boundary();
+                self.close_attr_obj(obj_span);
+                self.handle_boundary_token(boundary)
+            }
+        }
+    }
+
+    fn step_after_bare_value(&mut self, value_span: Span) -> Option<Event<'src>> {
+        let t = self.next_token();
+
+        match t.kind {
+            TokenKind::Gt if t.span.start == value_span.end => {
+                // The bare scalar we emitted was actually an attribute key!
+                // We already emitted Scalar - that's now being reinterpreted.
+                // Emit ObjectStart, then the inner entry structure.
+                self.context_stack.push(Context::AttrObject);
+                self.event_queue.push_back(Event::EntryStart);
+                self.event_queue.push_back(Event::Key {
+                    span: value_span,
+                    tag: None,
+                    payload: Some(Cow::Borrowed(self.span_text(value_span))),
+                    kind: ScalarKind::Bare,
+                });
+                self.state = State::AfterGt {
+                    key_span: value_span,
+                    in_chain: true,
+                };
+                Some(Event::ObjectStart {
+                    span: value_span,
+                    separator: Separator::Comma,
+                })
+            }
+
+            // Normal boundary - end entry
+            TokenKind::Newline
+            | TokenKind::Eof
+            | TokenKind::RBrace
+            | TokenKind::RParen
+            | TokenKind::Comma => {
+                self.event_queue.push_back(Event::EntryEnd);
+                self.state = State::ExpectEntry;
+                self.handle_boundary_token(t)
+            }
+
+            TokenKind::LineComment => {
+                self.event_queue.push_back(Event::EntryEnd);
+                self.state = State::ExpectEntry;
+                Some(Event::Comment {
+                    span: t.span,
+                    text: t.text,
+                })
+            }
+
+            // Extra atom - TooManyAtoms
+            _ => {
+                self.event_queue.push_back(Event::Error {
+                    span: t.span,
+                    kind: ParseErrorKind::TooManyAtoms,
+                });
+                let boundary = self.skip_to_boundary();
+                self.event_queue.push_back(Event::EntryEnd);
+                self.state = State::ExpectEntry;
+                self.handle_boundary_token(boundary)
             }
         }
     }
@@ -432,110 +970,34 @@ impl<'src> Parser2<'src> {
             | TokenKind::RParen
             | TokenKind::Comma => {
                 self.event_queue.push_back(Event::EntryEnd);
-                self.unread(t);
-                self.state = State::ExpectingEntry;
-                None
+                self.state = State::ExpectEntry;
+                self.handle_boundary_token(t)
             }
 
             TokenKind::LineComment => {
                 self.event_queue.push_back(Event::EntryEnd);
-                self.state = State::ExpectingEntry;
+                self.state = State::ExpectEntry;
                 Some(Event::Comment {
                     span: t.span,
                     text: t.text,
                 })
             }
 
-            // Extra atom = TooManyAtoms
-            TokenKind::BareScalar
-            | TokenKind::QuotedScalar
-            | TokenKind::RawScalar
-            | TokenKind::LBrace
-            | TokenKind::LParen
-            | TokenKind::At
-            | TokenKind::HeredocStart => {
+            // TooManyAtoms
+            _ => {
                 self.event_queue.push_back(Event::Error {
                     span: t.span,
                     kind: ParseErrorKind::TooManyAtoms,
                 });
-                self.skip_to_entry_boundary();
+                let boundary = self.skip_to_boundary();
                 self.event_queue.push_back(Event::EntryEnd);
-                self.state = State::ExpectingEntry;
-                None
-            }
-
-            _ => {
-                self.event_queue.push_back(Event::EntryEnd);
-                self.state = State::ExpectingEntry;
-                None
+                self.state = State::ExpectEntry;
+                self.handle_boundary_token(boundary)
             }
         }
     }
 
-    fn step_in_attribute_chain(&mut self, obj_start_span: Span) -> Option<Event<'src>> {
-        let t = self.next_token();
-
-        match t.kind {
-            TokenKind::BareScalar => {
-                // Check if followed by >
-                let next = self.next_token();
-                if next.kind == TokenKind::Gt && next.span.start == t.span.end {
-                    // Another attribute
-                    self.event_queue.push_back(Event::EntryStart);
-                    self.event_queue.push_back(Event::Key {
-                        span: t.span,
-                        tag: None,
-                        payload: Some(Cow::Borrowed(t.text)),
-                        kind: ScalarKind::Bare,
-                    });
-
-                    let val = self.next_token();
-                    let val_ev = self.token_to_scalar(val);
-                    self.event_queue.push_back(val_ev);
-                    self.event_queue.push_back(Event::EntryEnd);
-
-                    self.state = State::InAttributeChain { obj_start_span };
-                    return None;
-                }
-
-                // Not attribute - this is TooManyAtoms
-                self.unread(next);
-                self.event_queue.push_back(Event::Error {
-                    span: t.span,
-                    kind: ParseErrorKind::TooManyAtoms,
-                });
-                self.skip_to_entry_boundary();
-                self.close_attribute_chain();
-                None
-            }
-
-            TokenKind::Newline
-            | TokenKind::Eof
-            | TokenKind::RBrace
-            | TokenKind::RParen
-            | TokenKind::Comma => {
-                self.unread(t);
-                self.close_attribute_chain();
-                None
-            }
-
-            TokenKind::LineComment => {
-                self.close_attribute_chain();
-                Some(Event::Comment {
-                    span: t.span,
-                    text: t.text,
-                })
-            }
-
-            _ => {
-                self.unread(t);
-                self.close_attribute_chain();
-                None
-            }
-        }
-    }
-
-    fn step_expecting_sequence_element(&mut self) -> Option<Event<'src>> {
+    fn step_expect_seq_elem(&mut self) -> Option<Event<'src>> {
         let t = self.next_token_skip_newlines();
 
         match t.kind {
@@ -550,7 +1012,7 @@ impl<'src> Parser2<'src> {
                     span: t.span,
                     kind: ParseErrorKind::UnclosedSequence,
                 });
-                self.close_contexts_at_eof()
+                self.close_at_eof()
             }
 
             TokenKind::RBrace => Some(Event::Error {
@@ -580,7 +1042,7 @@ impl<'src> Parser2<'src> {
 
             TokenKind::LBrace => {
                 self.context_stack.push(Context::Object { implicit: false });
-                self.state = State::ExpectingEntry;
+                self.state = State::ExpectEntry;
                 Some(Event::ObjectStart {
                     span: t.span,
                     separator: Separator::Comma,
@@ -592,7 +1054,7 @@ impl<'src> Parser2<'src> {
                 Some(Event::SequenceStart { span: t.span })
             }
 
-            TokenKind::At => Some(self.parse_tag_value(t.span)),
+            TokenKind::At => Some(self.parse_tag_value(t)),
 
             TokenKind::LineComment => Some(Event::Comment {
                 span: t.span,
@@ -605,8 +1067,19 @@ impl<'src> Parser2<'src> {
 
     // === Helpers ===
 
-    fn close_contexts_at_eof(&mut self) -> Option<Event<'src>> {
-        // Check dangling docs
+    fn handle_boundary_token(&mut self, t: Token<'src>) -> Option<Event<'src>> {
+        match t.kind {
+            TokenKind::RBrace => self.handle_rbrace(t.span),
+            TokenKind::RParen => Some(Event::Error {
+                span: t.span,
+                kind: ParseErrorKind::UnexpectedToken,
+            }),
+            TokenKind::Eof => self.close_at_eof(),
+            _ => None,
+        }
+    }
+
+    fn close_at_eof(&mut self) -> Option<Event<'src>> {
         if let Some((span, _)) = self.pending_doc.first() {
             let span = *span;
             self.pending_doc.clear();
@@ -646,12 +1119,12 @@ impl<'src> Parser2<'src> {
                         span: Span::new(self.input.len() as u32, self.input.len() as u32),
                     });
                 }
-                Context::AttributeObject => {
+                Context::AttrObject => {
                     self.event_queue.push_back(Event::ObjectEnd {
                         span: Span::new(self.input.len() as u32, self.input.len() as u32),
                     });
                     self.event_queue.push_back(Event::EntryEnd);
-                    return self.close_contexts_at_eof();
+                    return self.close_at_eof();
                 }
             }
         }
@@ -661,7 +1134,6 @@ impl<'src> Parser2<'src> {
     }
 
     fn handle_rbrace(&mut self, span: Span) -> Option<Event<'src>> {
-        // Check dangling docs
         if let Some((doc_span, _)) = self.pending_doc.first() {
             let doc_span = *doc_span;
             self.pending_doc.clear();
@@ -690,322 +1162,29 @@ impl<'src> Parser2<'src> {
         }
     }
 
-    fn handle_at_as_key(&mut self, at_span: Span) -> Option<Event<'src>> {
+    fn close_attr_obj(&mut self, obj_span: Span) {
+        self.context_stack.pop(); // AttrObject
+        self.event_queue
+            .push_back(Event::ObjectEnd { span: obj_span });
+        self.event_queue.push_back(Event::EntryEnd);
+        self.state = State::ExpectEntry;
+    }
+
+    fn state_after_close(&self) -> State {
+        match self.context_stack.last() {
+            Some(Context::Object { .. }) => State::AfterValue,
+            Some(Context::Sequence) => State::ExpectSeqElem,
+            Some(Context::AttrObject) => State::MaybeMoreAttr {
+                obj_span: Span::new(0, 0),
+            },
+            None => State::Done,
+        }
+    }
+
+    fn parse_tag_value(&mut self, at_token: Token<'src>) -> Event<'src> {
         let t = self.next_token();
 
-        if t.kind == TokenKind::BareScalar && t.span.start == at_span.end {
-            // @tagname as key
-            let (tag_name, name_end) = self.extract_tag_name(t.text, t.span.start);
-            let has_trailing_at = name_end < t.span.end;
-
-            // Invalid key forms: @tag{}, @tag(), @tag@
-            if has_trailing_at {
-                return Some(Event::Error {
-                    span: Span::new(at_span.start, name_end + 1),
-                    kind: ParseErrorKind::InvalidKey,
-                });
-            }
-
-            let next = self.next_token();
-            if next.span.start == name_end
-                && matches!(
-                    next.kind,
-                    TokenKind::LBrace | TokenKind::LParen | TokenKind::At
-                )
-            {
-                self.unread(next);
-                return Some(Event::Error {
-                    span: Span::new(at_span.start, name_end),
-                    kind: ParseErrorKind::InvalidKey,
-                });
-            }
-            self.unread(next);
-
-            // Skip @schema at implicit root
-            if tag_name == "schema"
-                && self.context_stack.last() == Some(&Context::Object { implicit: true })
-            {
-                self.skip_value();
-                self.pending_doc.clear();
-                return None;
-            }
-
-            // Validate tag name
-            if tag_name.is_empty() || !Self::is_valid_tag_name(tag_name) {
-                self.event_queue.push_back(Event::Error {
-                    span: Span::new(t.span.start, name_end),
-                    kind: ParseErrorKind::InvalidTagName,
-                });
-            }
-
-            self.emit_pending_docs();
-            self.event_queue.push_back(Event::Key {
-                span: Span::new(at_span.start, name_end),
-                tag: Some(tag_name),
-                payload: None,
-                kind: ScalarKind::Bare,
-            });
-            self.state = State::AfterKey {
-                key_span: Span::new(at_span.start, name_end),
-            };
-            return Some(Event::EntryStart);
-        }
-
-        // @ alone = unit key
-        self.unread(t);
-        self.emit_pending_docs();
-        self.event_queue.push_back(Event::Key {
-            span: at_span,
-            tag: None,
-            payload: None,
-            kind: ScalarKind::Bare,
-        });
-        self.state = State::AfterKey { key_span: at_span };
-        Some(Event::EntryStart)
-    }
-
-    fn parse_attribute_value(&mut self, key_span: Span) -> Option<Event<'src>> {
-        // We just consumed `key>`, now parse the value
-        let val_token = self.next_token();
-
-        match val_token.kind {
-            TokenKind::BareScalar | TokenKind::QuotedScalar | TokenKind::RawScalar => {
-                let val_ev = self.token_to_scalar(val_token);
-
-                // Check for more attributes
-                let next = self.next_token();
-                if next.kind == TokenKind::BareScalar {
-                    let after = self.next_token();
-                    if after.kind == TokenKind::Gt && after.span.start == next.span.end {
-                        // Multiple attributes - start implicit object
-                        self.context_stack.push(Context::AttributeObject);
-
-                        // First entry
-                        self.event_queue.push_back(Event::EntryStart);
-                        self.event_queue.push_back(Event::Key {
-                            span: key_span,
-                            tag: None,
-                            payload: Some(Cow::Borrowed(self.span_text(key_span))),
-                            kind: ScalarKind::Bare,
-                        });
-                        self.event_queue.push_back(val_ev);
-                        self.event_queue.push_back(Event::EntryEnd);
-
-                        // Second entry
-                        self.event_queue.push_back(Event::EntryStart);
-                        self.event_queue.push_back(Event::Key {
-                            span: next.span,
-                            tag: None,
-                            payload: Some(Cow::Borrowed(next.text)),
-                            kind: ScalarKind::Bare,
-                        });
-
-                        let val2 = self.next_token();
-                        let val2_ev = self.token_to_scalar(val2);
-                        self.event_queue.push_back(val2_ev);
-                        self.event_queue.push_back(Event::EntryEnd);
-
-                        self.state = State::InAttributeChain {
-                            obj_start_span: key_span,
-                        };
-
-                        return Some(Event::ObjectStart {
-                            span: key_span,
-                            separator: Separator::Comma,
-                        });
-                    }
-                    self.unread(after);
-                    self.unread(next);
-                } else {
-                    self.unread(next);
-                }
-
-                // Single attribute - wrap in object
-                self.event_queue.push_back(Event::EntryStart);
-                self.event_queue.push_back(Event::Key {
-                    span: key_span,
-                    tag: None,
-                    payload: Some(Cow::Borrowed(self.span_text(key_span))),
-                    kind: ScalarKind::Bare,
-                });
-                self.event_queue.push_back(val_ev);
-                self.event_queue.push_back(Event::EntryEnd);
-                self.event_queue
-                    .push_back(Event::ObjectEnd { span: key_span });
-                self.event_queue.push_back(Event::EntryEnd);
-                self.state = State::ExpectingEntry;
-
-                Some(Event::ObjectStart {
-                    span: key_span,
-                    separator: Separator::Comma,
-                })
-            }
-
-            TokenKind::LBrace => {
-                // key>{...}
-                self.event_queue.push_back(Event::EntryStart);
-                self.event_queue.push_back(Event::Key {
-                    span: key_span,
-                    tag: None,
-                    payload: Some(Cow::Borrowed(self.span_text(key_span))),
-                    kind: ScalarKind::Bare,
-                });
-
-                self.context_stack.push(Context::Object { implicit: false });
-                self.event_queue.push_back(Event::ObjectStart {
-                    span: val_token.span,
-                    separator: Separator::Comma,
-                });
-                self.state = State::ExpectingEntry;
-
-                Some(Event::ObjectStart {
-                    span: key_span,
-                    separator: Separator::Comma,
-                })
-            }
-
-            TokenKind::LParen => {
-                // key>(...)
-                self.event_queue.push_back(Event::EntryStart);
-                self.event_queue.push_back(Event::Key {
-                    span: key_span,
-                    tag: None,
-                    payload: Some(Cow::Borrowed(self.span_text(key_span))),
-                    kind: ScalarKind::Bare,
-                });
-
-                self.context_stack.push(Context::Sequence);
-                self.event_queue.push_back(Event::SequenceStart {
-                    span: val_token.span,
-                });
-                self.state = State::ExpectingSequenceElement;
-
-                Some(Event::ObjectStart {
-                    span: key_span,
-                    separator: Separator::Comma,
-                })
-            }
-
-            TokenKind::At => {
-                // key>@tag
-                let tag_ev = self.parse_tag_value(val_token.span);
-
-                self.event_queue.push_back(Event::EntryStart);
-                self.event_queue.push_back(Event::Key {
-                    span: key_span,
-                    tag: None,
-                    payload: Some(Cow::Borrowed(self.span_text(key_span))),
-                    kind: ScalarKind::Bare,
-                });
-                self.event_queue.push_back(tag_ev);
-                self.event_queue.push_back(Event::EntryEnd);
-                self.event_queue
-                    .push_back(Event::ObjectEnd { span: key_span });
-                self.event_queue.push_back(Event::EntryEnd);
-                self.state = State::ExpectingEntry;
-
-                Some(Event::ObjectStart {
-                    span: key_span,
-                    separator: Separator::Comma,
-                })
-            }
-
-            _ => {
-                self.event_queue.push_back(Event::Error {
-                    span: val_token.span,
-                    kind: ParseErrorKind::ExpectedValue,
-                });
-                self.event_queue.push_back(Event::EntryEnd);
-                self.state = State::ExpectingEntry;
-                None
-            }
-        }
-    }
-
-    fn parse_attribute_chain_as_value(&mut self, first_key_span: Span) -> Option<Event<'src>> {
-        // We're at: `outer_key first_attr_key>` and just consumed the `>`
-        let val = self.next_token();
-        let val_ev = self.token_to_scalar(val);
-
-        // Check for more attrs
-        let next = self.next_token();
-        if next.kind == TokenKind::BareScalar {
-            let after = self.next_token();
-            if after.kind == TokenKind::Gt && after.span.start == next.span.end {
-                // Multiple - implicit object
-                self.context_stack.push(Context::AttributeObject);
-
-                self.event_queue.push_back(Event::EntryStart);
-                self.event_queue.push_back(Event::Key {
-                    span: first_key_span,
-                    tag: None,
-                    payload: Some(Cow::Borrowed(self.span_text(first_key_span))),
-                    kind: ScalarKind::Bare,
-                });
-                self.event_queue.push_back(val_ev);
-                self.event_queue.push_back(Event::EntryEnd);
-
-                self.event_queue.push_back(Event::EntryStart);
-                self.event_queue.push_back(Event::Key {
-                    span: next.span,
-                    tag: None,
-                    payload: Some(Cow::Borrowed(next.text)),
-                    kind: ScalarKind::Bare,
-                });
-                let val2 = self.next_token();
-                let val2_ev = self.token_to_scalar(val2);
-                self.event_queue.push_back(val2_ev);
-                self.event_queue.push_back(Event::EntryEnd);
-
-                self.state = State::InAttributeChain {
-                    obj_start_span: first_key_span,
-                };
-
-                return Some(Event::ObjectStart {
-                    span: first_key_span,
-                    separator: Separator::Comma,
-                });
-            }
-            self.unread(after);
-            self.unread(next);
-        } else {
-            self.unread(next);
-        }
-
-        // Single attr
-        self.event_queue.push_back(Event::EntryStart);
-        self.event_queue.push_back(Event::Key {
-            span: first_key_span,
-            tag: None,
-            payload: Some(Cow::Borrowed(self.span_text(first_key_span))),
-            kind: ScalarKind::Bare,
-        });
-        self.event_queue.push_back(val_ev);
-        self.event_queue.push_back(Event::EntryEnd);
-        self.event_queue.push_back(Event::ObjectEnd {
-            span: first_key_span,
-        });
-        self.state = State::AfterValue;
-
-        Some(Event::ObjectStart {
-            span: first_key_span,
-            separator: Separator::Comma,
-        })
-    }
-
-    fn close_attribute_chain(&mut self) {
-        self.context_stack.pop(); // AttributeObject
-        self.event_queue.push_back(Event::ObjectEnd {
-            span: Span::new(0, 0),
-        });
-        self.event_queue.push_back(Event::EntryEnd);
-        self.state = State::ExpectingEntry;
-    }
-
-    fn parse_tag_value(&mut self, at_span: Span) -> Event<'src> {
-        let t = self.next_token();
-
-        if t.kind == TokenKind::BareScalar && t.span.start == at_span.end {
+        if t.kind == TokenKind::BareScalar && t.span.start == at_token.span.end {
             let (tag_name, name_end) = self.extract_tag_name(t.text, t.span.start);
             let has_trailing_at = name_end < t.span.end;
 
@@ -1017,18 +1196,17 @@ impl<'src> Parser2<'src> {
             }
 
             if has_trailing_at {
-                // @tag@
                 self.event_queue.push_back(Event::Unit {
                     span: Span::new(name_end, name_end + 1),
                 });
                 self.event_queue.push_back(Event::TagEnd);
                 return Event::TagStart {
-                    span: Span::new(at_span.start, name_end + 1),
+                    span: Span::new(at_token.span.start, name_end + 1),
                     name: tag_name,
                 };
             }
 
-            // Check for payload
+            // Check for payload - need to look at next token
             let next = self.next_token();
             if next.span.start == name_end {
                 match next.kind {
@@ -1038,9 +1216,9 @@ impl<'src> Parser2<'src> {
                             span: next.span,
                             separator: Separator::Comma,
                         });
-                        self.state = State::ExpectingEntry;
+                        self.state = State::ExpectEntry;
                         return Event::TagStart {
-                            span: Span::new(at_span.start, name_end),
+                            span: Span::new(at_token.span.start, name_end),
                             name: tag_name,
                         };
                     }
@@ -1048,9 +1226,9 @@ impl<'src> Parser2<'src> {
                         self.context_stack.push(Context::Sequence);
                         self.event_queue
                             .push_back(Event::SequenceStart { span: next.span });
-                        self.state = State::ExpectingSequenceElement;
+                        self.state = State::ExpectSeqElem;
                         return Event::TagStart {
-                            span: Span::new(at_span.start, name_end),
+                            span: Span::new(at_token.span.start, name_end),
                             name: tag_name,
                         };
                     }
@@ -1062,7 +1240,7 @@ impl<'src> Parser2<'src> {
                         });
                         self.event_queue.push_back(Event::TagEnd);
                         return Event::TagStart {
-                            span: Span::new(at_span.start, name_end),
+                            span: Span::new(at_token.span.start, name_end),
                             name: tag_name,
                         };
                     }
@@ -1074,57 +1252,94 @@ impl<'src> Parser2<'src> {
                         });
                         self.event_queue.push_back(Event::TagEnd);
                         return Event::TagStart {
-                            span: Span::new(at_span.start, name_end),
+                            span: Span::new(at_token.span.start, name_end),
                             name: tag_name,
                         };
                     }
                     _ => {
-                        self.unread(next);
+                        // Not adjacent payload - implicit unit
+                        // But we consumed a token we shouldn't have!
+                        // This is the ONE place we need to handle this
+                        self.event_queue.push_back(Event::Unit {
+                            span: Span::new(name_end, name_end),
+                        });
+                        self.event_queue.push_back(Event::TagEnd);
+                        // Handle the consumed token based on current context
+                        self.handle_consumed_after_tag(next);
+                        return Event::TagStart {
+                            span: Span::new(at_token.span.start, name_end),
+                            name: tag_name,
+                        };
                     }
                 }
-            } else {
-                self.unread(next);
             }
 
-            // Implicit unit
+            // Not adjacent - implicit unit, handle consumed token
             self.event_queue.push_back(Event::Unit {
                 span: Span::new(name_end, name_end),
             });
             self.event_queue.push_back(Event::TagEnd);
+            self.handle_consumed_after_tag(next);
             return Event::TagStart {
-                span: Span::new(at_span.start, name_end),
+                span: Span::new(at_token.span.start, name_end),
                 name: tag_name,
             };
         }
 
-        // @ alone
-        self.unread(t);
-        Event::Unit { span: at_span }
+        // @ alone - unit, but we consumed a token
+        self.handle_consumed_after_tag(t);
+        Event::Unit {
+            span: at_token.span,
+        }
     }
 
-    fn token_to_scalar(&mut self, t: Token<'src>) -> Event<'src> {
+    fn handle_consumed_after_tag(&mut self, t: Token<'src>) {
+        // We consumed a token after tag that we didn't use for the tag
+        // Queue it as an event or error based on context
         match t.kind {
-            TokenKind::BareScalar => Event::Scalar {
-                span: t.span,
-                value: Cow::Borrowed(t.text),
-                kind: ScalarKind::Bare,
-            },
-            TokenKind::QuotedScalar => Event::Scalar {
-                span: t.span,
-                value: self.unescape_quoted(t.text),
-                kind: ScalarKind::Quoted,
-            },
-            TokenKind::RawScalar => Event::Scalar {
-                span: t.span,
-                value: Cow::Borrowed(Self::strip_raw_delimiters(t.text)),
-                kind: ScalarKind::Raw,
-            },
-            TokenKind::HeredocStart => self.parse_heredoc(t.span),
-            _ => Event::Error {
-                span: t.span,
-                kind: ParseErrorKind::UnexpectedToken,
-            },
+            TokenKind::Newline | TokenKind::Comma => {
+                // Fine, just ends the entry
+            }
+            TokenKind::Eof => {
+                self.event_queue.push_back(Event::EntryEnd);
+                // Will trigger close_at_eof on next step
+            }
+            TokenKind::RBrace => {
+                self.event_queue.push_back(Event::EntryEnd);
+                if let Some(ev) = self.handle_rbrace(t.span) {
+                    self.event_queue.push_back(ev);
+                }
+            }
+            TokenKind::RParen => {
+                self.event_queue.push_back(Event::EntryEnd);
+                self.event_queue.push_back(Event::Error {
+                    span: t.span,
+                    kind: ParseErrorKind::UnexpectedToken,
+                });
+            }
+            _ => {
+                // TooManyAtoms
+                self.event_queue.push_back(Event::Error {
+                    span: t.span,
+                    kind: ParseErrorKind::TooManyAtoms,
+                });
+                let boundary = self.skip_to_boundary();
+                if let Some(ev) = self.handle_boundary_token(boundary) {
+                    self.event_queue.push_back(ev);
+                }
+            }
         }
+    }
+
+    fn emit_pending_docs(&mut self) {
+        for (span, text) in std::mem::take(&mut self.pending_doc) {
+            self.event_queue.push_back(Event::DocComment { span, text });
+        }
+    }
+
+    fn extract_tag_name<'a>(&self, text: &'a str, start: u32) -> (&'a str, u32) {
+        let len = text.find('@').unwrap_or(text.len());
+        (&text[..len], start + len as u32)
     }
 
     fn parse_heredoc(&mut self, start_span: Span) -> Event<'src> {
@@ -1159,7 +1374,7 @@ impl<'src> Parser2<'src> {
         }
     }
 
-    fn skip_to_entry_boundary(&mut self) {
+    fn skip_to_boundary(&mut self) -> Token<'src> {
         loop {
             let t = self.next_token();
             match t.kind {
@@ -1167,10 +1382,7 @@ impl<'src> Parser2<'src> {
                 | TokenKind::Eof
                 | TokenKind::RBrace
                 | TokenKind::RParen
-                | TokenKind::Comma => {
-                    self.unread(t);
-                    break;
-                }
+                | TokenKind::Comma => return t,
                 TokenKind::LBrace => self.skip_nested(TokenKind::RBrace),
                 TokenKind::LParen => self.skip_nested(TokenKind::RParen),
                 _ => {}
@@ -1197,41 +1409,14 @@ impl<'src> Parser2<'src> {
             let t = self.next_token();
             match t.kind {
                 TokenKind::LBrace | TokenKind::LParen => depth += 1,
-                TokenKind::RBrace | TokenKind::RParen => {
-                    if depth == 0 {
-                        self.unread(t);
-                        break;
-                    }
-                    depth -= 1;
-                }
+                TokenKind::RBrace | TokenKind::RParen if depth > 0 => depth -= 1,
+                TokenKind::RBrace | TokenKind::RParen => break,
                 TokenKind::Newline | TokenKind::Comma if depth == 0 => break,
                 TokenKind::Eof => break,
                 _ if depth == 0 => break,
                 _ => {}
             }
         }
-    }
-
-    fn state_after_close(&self) -> State {
-        match self.context_stack.last() {
-            Some(Context::Object { .. }) => State::AfterValue,
-            Some(Context::Sequence) => State::ExpectingSequenceElement,
-            Some(Context::AttributeObject) => State::InAttributeChain {
-                obj_start_span: Span::new(0, 0),
-            },
-            None => State::Done,
-        }
-    }
-
-    fn emit_pending_docs(&mut self) {
-        for (span, text) in std::mem::take(&mut self.pending_doc) {
-            self.event_queue.push_back(Event::DocComment { span, text });
-        }
-    }
-
-    fn extract_tag_name<'a>(&self, text: &'a str, start: u32) -> (&'a str, u32) {
-        let len = text.find('@').unwrap_or(text.len());
-        (&text[..len], start + len as u32)
     }
 
     // === String processing ===
