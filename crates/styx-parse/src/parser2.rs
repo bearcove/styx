@@ -52,6 +52,34 @@ enum State {
     },
     /// After value - check for TooManyAtoms or boundary.
     AfterValue,
+    /// After tag with implicit unit where boundary was already consumed.
+    AfterTagBoundaryConsumed {
+        kind: TokenKind,
+        span: Span,
+    },
+    /// Emitting remaining segments of a dotted path.
+    EmitDottedPath {
+        /// The segments remaining to emit (not including the first which was already emitted).
+        segments: Vec<(Span, String)>,
+        /// Index of current segment being processed.
+        current_idx: usize,
+        /// Number of ObjectStarts emitted (need to close this many).
+        depth: usize,
+    },
+    /// After the last segment of a dotted path - expecting value.
+    AfterDottedPathKey {
+        /// Number of nested objects to close after value.
+        depth: usize,
+        /// Full path for validation when we see the value.
+        path: Vec<String>,
+        /// Span of the full dotted path for error reporting.
+        path_span: Span,
+    },
+    /// After dotted path value - need to close nested objects.
+    CloseDottedPath {
+        /// Number of remaining objects to close.
+        remaining: usize,
+    },
     ExpectSeqElem,
     Done,
 }
@@ -63,6 +91,87 @@ enum Context {
     AttrObject,
 }
 
+/// Whether a path leads to an object (can have children) or a terminal value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PathValueKind {
+    Object,
+    Terminal,
+}
+
+/// Error returned when path validation fails.
+#[derive(Debug)]
+enum PathError {
+    Duplicate { original: Span },
+    Reopened { closed_path: Vec<String> },
+    NestIntoTerminal { terminal_path: Vec<String> },
+}
+
+/// Tracks dotted path state for sibling detection and reopen errors.
+#[derive(Default)]
+struct PathState {
+    current_path: Vec<String>,
+    closed_paths: std::collections::HashSet<Vec<String>>,
+    assigned_paths: std::collections::HashMap<Vec<String>, (Span, PathValueKind)>,
+}
+
+impl PathState {
+    fn check_and_update(
+        &mut self,
+        path: &[String],
+        span: Span,
+        value_kind: PathValueKind,
+    ) -> Result<(), PathError> {
+        // Check for duplicate (exact same path)
+        if let Some(&(original, _)) = self.assigned_paths.get(path) {
+            return Err(PathError::Duplicate { original });
+        }
+
+        // Check if any proper prefix is closed or has a terminal value
+        for i in 1..path.len() {
+            let prefix = &path[..i];
+            if self.closed_paths.contains(prefix) {
+                return Err(PathError::Reopened {
+                    closed_path: prefix.to_vec(),
+                });
+            }
+            if let Some(&(_, PathValueKind::Terminal)) = self.assigned_paths.get(prefix) {
+                return Err(PathError::NestIntoTerminal {
+                    terminal_path: prefix.to_vec(),
+                });
+            }
+        }
+
+        // Find common prefix length with current path
+        let common_len = self
+            .current_path
+            .iter()
+            .zip(path.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        // Close paths beyond the common prefix
+        for i in common_len..self.current_path.len() {
+            let closed: Vec<String> = self.current_path[..=i].to_vec();
+            self.closed_paths.insert(closed);
+        }
+
+        // Record intermediate path segments as objects (if not already assigned)
+        for i in 1..path.len() {
+            let prefix = path[..i].to_vec();
+            self.assigned_paths
+                .entry(prefix)
+                .or_insert((span, PathValueKind::Object));
+        }
+
+        // Update assigned paths and current path
+        self.assigned_paths
+            .insert(path.to_vec(), (span, value_kind));
+        self.current_path = path.to_vec();
+
+        Ok(())
+    }
+}
+
 pub struct Parser2<'src> {
     input: &'src str,
     lexer: Lexer<'src>,
@@ -71,6 +180,12 @@ pub struct Parser2<'src> {
     event_queue: VecDeque<Event<'src>>,
     pending_doc: Vec<(Span, &'src str)>,
     expr_mode: bool,
+    path_state: PathState,
+    /// Keys seen in current object scope for duplicate detection.
+    /// Maps normalized key string to its first occurrence span.
+    keys_in_scope: Vec<std::collections::HashMap<String, Span>>,
+    /// Separator for current object scope (for mixed separator detection).
+    separators_in_scope: Vec<Option<Separator>>,
 }
 
 impl<'src> Parser2<'src> {
@@ -83,6 +198,9 @@ impl<'src> Parser2<'src> {
             event_queue: VecDeque::new(),
             pending_doc: Vec::new(),
             expr_mode: false,
+            path_state: PathState::default(),
+            keys_in_scope: Vec::new(),
+            separators_in_scope: Vec::new(),
         }
     }
 
@@ -95,6 +213,9 @@ impl<'src> Parser2<'src> {
             event_queue: VecDeque::new(),
             pending_doc: Vec::new(),
             expr_mode: true,
+            path_state: PathState::default(),
+            keys_in_scope: Vec::new(),
+            separators_in_scope: Vec::new(),
         }
     }
 
@@ -136,6 +257,20 @@ impl<'src> Parser2<'src> {
             }
             State::AfterBareValue { value_span } => self.step_after_bare_value(value_span),
             State::AfterValue => self.step_after_value(),
+            State::AfterTagBoundaryConsumed { kind, span } => {
+                self.step_after_tag_boundary_consumed(kind, span)
+            }
+            State::EmitDottedPath {
+                segments,
+                current_idx,
+                depth,
+            } => self.step_emit_dotted_path(segments, current_idx, depth),
+            State::AfterDottedPathKey {
+                depth,
+                path,
+                path_span,
+            } => self.step_after_dotted_path_key(depth, path, path_span),
+            State::CloseDottedPath { remaining } => self.step_close_dotted_path(remaining),
             State::ExpectSeqElem => self.step_expect_seq_elem(),
             State::Done => None,
         }
@@ -165,6 +300,121 @@ impl<'src> Parser2<'src> {
         &self.input[span.start as usize..span.end as usize]
     }
 
+    fn emit_path_error(&self, err: PathError, span: Span) -> Event<'src> {
+        let kind = match err {
+            PathError::Duplicate { original } => ParseErrorKind::DuplicateKey { original },
+            PathError::Reopened { closed_path } => ParseErrorKind::ReopenedPath { closed_path },
+            PathError::NestIntoTerminal { terminal_path } => {
+                ParseErrorKind::NestIntoTerminal { terminal_path }
+            }
+        };
+        Event::Error { span, kind }
+    }
+
+    // === Key scope management for duplicate detection ===
+
+    fn push_key_scope(&mut self) {
+        self.keys_in_scope.push(std::collections::HashMap::new());
+    }
+
+    fn pop_key_scope(&mut self) {
+        self.keys_in_scope.pop();
+    }
+
+    /// Normalize a key for duplicate detection.
+    /// Returns a string that represents the key's identity.
+    fn normalize_key(&self, tag: Option<&str>, payload: Option<&Cow<'src, str>>) -> String {
+        match (tag, payload) {
+            (None, None) => "@".to_string(),                     // unit key
+            (Some(name), None) => format!("@{}", name),          // tagged without payload
+            (Some(name), Some(p)) => format!("@{}:{}", name, p), // tagged with payload
+            (None, Some(p)) => p.to_string(),                    // regular key
+        }
+    }
+
+    /// Check for duplicate key and record it. Returns Some(error) if duplicate.
+    fn check_duplicate_key(
+        &mut self,
+        span: Span,
+        tag: Option<&str>,
+        payload: Option<&Cow<'src, str>>,
+    ) -> Option<Event<'src>> {
+        let normalized = self.normalize_key(tag, payload);
+
+        if let Some(scope) = self.keys_in_scope.last_mut() {
+            if let Some(&original) = scope.get(&normalized) {
+                return Some(Event::Error {
+                    span,
+                    kind: ParseErrorKind::DuplicateKey { original },
+                });
+            }
+            scope.insert(normalized, span);
+        }
+        None
+    }
+
+    /// Emit a Key event and check for duplicates. Queues error if duplicate.
+    fn emit_key(
+        &mut self,
+        span: Span,
+        tag: Option<&'src str>,
+        payload: Option<Cow<'src, str>>,
+        kind: ScalarKind,
+    ) -> Event<'src> {
+        if let Some(err) = self.check_duplicate_key(span, tag, payload.as_ref()) {
+            self.event_queue.push_back(err);
+        }
+        Event::Key {
+            span,
+            tag,
+            payload,
+            kind,
+        }
+    }
+
+    /// Queue a Key event and check for duplicates.
+    fn queue_key(
+        &mut self,
+        span: Span,
+        tag: Option<&'src str>,
+        payload: Option<Cow<'src, str>>,
+        kind: ScalarKind,
+    ) {
+        if let Some(err) = self.check_duplicate_key(span, tag, payload.as_ref()) {
+            self.event_queue.push_back(err);
+        }
+        self.event_queue.push_back(Event::Key {
+            span,
+            tag,
+            payload,
+            kind,
+        });
+    }
+
+    /// Push an object context and associated key scope.
+    fn push_object_context(&mut self, implicit: bool) {
+        self.context_stack.push(Context::Object { implicit });
+        self.push_key_scope();
+    }
+
+    /// Push an attribute object context and associated key scope.
+    fn push_attr_object_context(&mut self) {
+        self.context_stack.push(Context::AttrObject);
+        self.push_key_scope();
+    }
+
+    /// Pop context and if it was an object, also pop key scope.
+    fn pop_context(&mut self) -> Option<Context> {
+        let ctx = self.context_stack.pop();
+        if matches!(
+            ctx,
+            Some(Context::Object { .. }) | Some(Context::AttrObject)
+        ) {
+            self.pop_key_scope();
+        }
+        ctx
+    }
+
     // === State handlers ===
 
     fn step_before_root(&mut self) -> Option<Event<'src>> {
@@ -173,7 +423,7 @@ impl<'src> Parser2<'src> {
         match t.kind {
             TokenKind::Eof => {
                 if !self.expr_mode {
-                    self.context_stack.push(Context::Object { implicit: true });
+                    self.push_object_context(true);
                     self.event_queue.push_back(Event::ObjectEnd {
                         span: Span::new(0, 0),
                     });
@@ -199,7 +449,7 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::LBrace => {
-                self.context_stack.push(Context::Object { implicit: false });
+                self.push_object_context(false);
                 self.state = State::ExpectEntry;
                 Some(Event::ObjectStart {
                     span: t.span,
@@ -209,24 +459,40 @@ impl<'src> Parser2<'src> {
 
             // Implicit root
             TokenKind::BareScalar => {
-                self.context_stack.push(Context::Object { implicit: true });
+                self.push_object_context(true);
                 self.emit_pending_docs();
-                self.event_queue.push_back(Event::Key {
+                self.event_queue.push_back(Event::EntryStart);
+                self.event_queue.push_back(Event::ObjectStart {
+                    span: Span::new(0, 0),
+                    separator: Separator::Newline,
+                });
+
+                // Check for dotted path
+                if t.text.contains('.') {
+                    if let Some(segments) = self.parse_dotted_path(t.text, t.span) {
+                        return self.start_dotted_path(segments, t.span);
+                    } else {
+                        // Invalid dotted path
+                        self.state = State::ExpectEntry;
+                        return Some(Event::Error {
+                            span: t.span,
+                            kind: ParseErrorKind::InvalidKey,
+                        });
+                    }
+                }
+
+                // Regular bare key
+                self.state = State::AfterBareKey { key_span: t.span };
+                Some(Event::Key {
                     span: t.span,
                     tag: None,
                     payload: Some(Cow::Borrowed(t.text)),
                     kind: ScalarKind::Bare,
-                });
-                self.state = State::AfterBareKey { key_span: t.span };
-                self.event_queue.push_back(Event::EntryStart);
-                Some(Event::ObjectStart {
-                    span: Span::new(0, 0),
-                    separator: Separator::Newline,
                 })
             }
 
             TokenKind::QuotedScalar => {
-                self.context_stack.push(Context::Object { implicit: true });
+                self.push_object_context(true);
                 self.emit_pending_docs();
                 self.event_queue.push_back(Event::Key {
                     span: t.span,
@@ -243,7 +509,7 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::At => {
-                self.context_stack.push(Context::Object { implicit: true });
+                self.push_object_context(true);
                 self.state = State::AfterAtKey { at_span: t.span };
                 self.event_queue.push_back(Event::EntryStart);
                 Some(Event::ObjectStart {
@@ -252,8 +518,23 @@ impl<'src> Parser2<'src> {
                 })
             }
 
+            TokenKind::HeredocStart => {
+                // Heredoc as key is invalid
+                self.push_object_context(true);
+                self.skip_heredoc();
+                self.state = State::ExpectEntry;
+                self.event_queue.push_back(Event::Error {
+                    span: t.span,
+                    kind: ParseErrorKind::InvalidKey,
+                });
+                Some(Event::ObjectStart {
+                    span: Span::new(0, 0),
+                    separator: Separator::Newline,
+                })
+            }
+
             _ => {
-                self.context_stack.push(Context::Object { implicit: true });
+                self.push_object_context(true);
                 self.state = State::ExpectEntry;
                 Some(Event::ObjectStart {
                     span: Span::new(0, 0),
@@ -290,6 +571,22 @@ impl<'src> Parser2<'src> {
 
             TokenKind::BareScalar => {
                 self.emit_pending_docs();
+
+                // Check for dotted path
+                if t.text.contains('.') {
+                    if let Some(segments) = self.parse_dotted_path(t.text, t.span) {
+                        self.event_queue.push_back(Event::EntryStart);
+                        return self.start_dotted_path(segments, t.span);
+                    } else {
+                        // Invalid dotted path
+                        return Some(Event::Error {
+                            span: t.span,
+                            kind: ParseErrorKind::InvalidKey,
+                        });
+                    }
+                }
+
+                // Regular bare key
                 self.event_queue.push_back(Event::Key {
                     span: t.span,
                     tag: None,
@@ -377,7 +674,7 @@ impl<'src> Parser2<'src> {
                         kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
                     });
                 }
-                self.context_stack.push(Context::Object { implicit: false });
+                self.push_object_context(false);
                 self.state = State::ExpectEntry;
                 Some(Event::ObjectStart {
                     span: t.span,
@@ -399,7 +696,10 @@ impl<'src> Parser2<'src> {
 
             TokenKind::At => {
                 let ev = self.parse_tag_value(t);
-                self.state = State::AfterValue;
+                // parse_tag_value sets state to AfterTagBoundaryConsumed if it consumed a boundary
+                if !matches!(self.state, State::AfterTagBoundaryConsumed { .. }) {
+                    self.state = State::AfterValue;
+                }
                 Some(ev)
             }
 
@@ -571,7 +871,7 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::LBrace => {
-                self.context_stack.push(Context::Object { implicit: false });
+                self.push_object_context(false);
                 self.state = State::ExpectEntry;
                 Some(Event::ObjectStart {
                     span: t.span,
@@ -587,7 +887,10 @@ impl<'src> Parser2<'src> {
 
             TokenKind::At => {
                 let ev = self.parse_tag_value(t);
-                self.state = State::AfterValue;
+                // parse_tag_value sets state to AfterTagBoundaryConsumed if it consumed a boundary
+                if !matches!(self.state, State::AfterTagBoundaryConsumed { .. }) {
+                    self.state = State::AfterValue;
+                }
                 Some(ev)
             }
 
@@ -669,7 +972,7 @@ impl<'src> Parser2<'src> {
 
                 if !in_chain {
                     // First attribute - we need to emit ObjectStart
-                    self.context_stack.push(Context::AttrObject);
+                    self.push_attr_object_context();
                     self.state = State::MaybeMoreAttr { obj_span: key_span };
                     return Some(Event::ObjectStart {
                         span: key_span,
@@ -697,7 +1000,7 @@ impl<'src> Parser2<'src> {
                 self.event_queue.push_back(Event::EntryEnd);
 
                 if !in_chain {
-                    self.context_stack.push(Context::AttrObject);
+                    self.push_attr_object_context();
                     self.state = State::MaybeMoreAttr { obj_span: key_span };
                     return Some(Event::ObjectStart {
                         span: key_span,
@@ -725,7 +1028,7 @@ impl<'src> Parser2<'src> {
                 self.event_queue.push_back(Event::EntryEnd);
 
                 if !in_chain {
-                    self.context_stack.push(Context::AttrObject);
+                    self.push_attr_object_context();
                     self.state = State::MaybeMoreAttr { obj_span: key_span };
                     return Some(Event::ObjectStart {
                         span: key_span,
@@ -748,14 +1051,14 @@ impl<'src> Parser2<'src> {
                 });
 
                 if !in_chain {
-                    self.context_stack.push(Context::AttrObject);
+                    self.push_attr_object_context();
                     self.event_queue.push_back(Event::ObjectStart {
                         span: key_span,
                         separator: Separator::Comma,
                     });
                 }
 
-                self.context_stack.push(Context::Object { implicit: false });
+                self.push_object_context(false);
                 self.state = State::ExpectEntry;
                 Some(Event::ObjectStart {
                     span: t.span,
@@ -774,7 +1077,7 @@ impl<'src> Parser2<'src> {
                 });
 
                 if !in_chain {
-                    self.context_stack.push(Context::AttrObject);
+                    self.push_attr_object_context();
                     self.event_queue.push_back(Event::ObjectStart {
                         span: key_span,
                         separator: Separator::Comma,
@@ -801,7 +1104,7 @@ impl<'src> Parser2<'src> {
                 self.event_queue.push_back(Event::EntryEnd);
 
                 if !in_chain {
-                    self.context_stack.push(Context::AttrObject);
+                    self.push_attr_object_context();
                     self.state = State::MaybeMoreAttr { obj_span: key_span };
                     return Some(Event::ObjectStart {
                         span: key_span,
@@ -908,7 +1211,7 @@ impl<'src> Parser2<'src> {
                 // The bare scalar we emitted was actually an attribute key!
                 // We already emitted Scalar - that's now being reinterpreted.
                 // Emit ObjectStart, then the inner entry structure.
-                self.context_stack.push(Context::AttrObject);
+                self.push_attr_object_context();
                 self.event_queue.push_back(Event::EntryStart);
                 self.event_queue.push_back(Event::Key {
                     span: value_span,
@@ -1041,7 +1344,7 @@ impl<'src> Parser2<'src> {
             TokenKind::HeredocStart => Some(self.parse_heredoc(t.span)),
 
             TokenKind::LBrace => {
-                self.context_stack.push(Context::Object { implicit: false });
+                self.push_object_context(false);
                 self.state = State::ExpectEntry;
                 Some(Event::ObjectStart {
                     span: t.span,
@@ -1089,7 +1392,7 @@ impl<'src> Parser2<'src> {
             });
         }
 
-        if let Some(ctx) = self.context_stack.pop() {
+        if let Some(ctx) = self.pop_context() {
             match ctx {
                 Context::Object { implicit } => {
                     if !implicit {
@@ -1143,13 +1446,17 @@ impl<'src> Parser2<'src> {
             });
         }
 
-        match self.context_stack.pop() {
+        match self.pop_context() {
             Some(Context::Object { implicit: false }) => {
                 self.state = self.state_after_close();
                 Some(Event::ObjectEnd { span })
             }
             Some(ctx) => {
+                // Push back - this wasn't the right context to close
                 self.context_stack.push(ctx);
+                if matches!(ctx, Context::Object { .. } | Context::AttrObject) {
+                    self.push_key_scope(); // Restore the scope we popped
+                }
                 Some(Event::Error {
                     span,
                     kind: ParseErrorKind::UnexpectedToken,
@@ -1163,7 +1470,7 @@ impl<'src> Parser2<'src> {
     }
 
     fn close_attr_obj(&mut self, obj_span: Span) {
-        self.context_stack.pop(); // AttrObject
+        self.pop_context(); // AttrObject - pops key scope too
         self.event_queue
             .push_back(Event::ObjectEnd { span: obj_span });
         self.event_queue.push_back(Event::EntryEnd);
@@ -1211,7 +1518,7 @@ impl<'src> Parser2<'src> {
             if next.span.start == name_end {
                 match next.kind {
                     TokenKind::LBrace => {
-                        self.context_stack.push(Context::Object { implicit: false });
+                        self.push_object_context(false);
                         self.event_queue.push_back(Event::ObjectStart {
                             span: next.span,
                             separator: Separator::Comma,
@@ -1294,40 +1601,57 @@ impl<'src> Parser2<'src> {
     }
 
     fn handle_consumed_after_tag(&mut self, t: Token<'src>) {
-        // We consumed a token after tag that we didn't use for the tag
-        // Queue it as an event or error based on context
+        // We consumed a token after tag that we didn't use for the tag.
+        // Transition to a state that knows which boundary was consumed.
         match t.kind {
-            TokenKind::Newline | TokenKind::Comma => {
-                // Fine, just ends the entry
-            }
-            TokenKind::Eof => {
-                self.event_queue.push_back(Event::EntryEnd);
-                // Will trigger close_at_eof on next step
-            }
-            TokenKind::RBrace => {
-                self.event_queue.push_back(Event::EntryEnd);
-                if let Some(ev) = self.handle_rbrace(t.span) {
-                    self.event_queue.push_back(ev);
-                }
-            }
-            TokenKind::RParen => {
-                self.event_queue.push_back(Event::EntryEnd);
-                self.event_queue.push_back(Event::Error {
+            TokenKind::Newline
+            | TokenKind::Comma
+            | TokenKind::Eof
+            | TokenKind::RBrace
+            | TokenKind::RParen => {
+                // Boundary token - let the state machine handle it
+                self.state = State::AfterTagBoundaryConsumed {
+                    kind: t.kind,
                     span: t.span,
-                    kind: ParseErrorKind::UnexpectedToken,
-                });
+                };
             }
             _ => {
-                // TooManyAtoms
+                // TooManyAtoms - skip to boundary and handle that
                 self.event_queue.push_back(Event::Error {
                     span: t.span,
                     kind: ParseErrorKind::TooManyAtoms,
                 });
                 let boundary = self.skip_to_boundary();
-                if let Some(ev) = self.handle_boundary_token(boundary) {
-                    self.event_queue.push_back(ev);
-                }
+                self.state = State::AfterTagBoundaryConsumed {
+                    kind: boundary.kind,
+                    span: boundary.span,
+                };
             }
+        }
+    }
+
+    fn step_after_tag_boundary_consumed(
+        &mut self,
+        kind: TokenKind,
+        span: Span,
+    ) -> Option<Event<'src>> {
+        // We already consumed a boundary token after a tag value.
+        // Emit EntryEnd and handle the boundary.
+        self.event_queue.push_back(Event::EntryEnd);
+        self.state = State::ExpectEntry;
+
+        match kind {
+            TokenKind::Newline | TokenKind::Comma => {
+                // Simple boundary, just continue
+                None
+            }
+            TokenKind::Eof => self.close_at_eof(),
+            TokenKind::RBrace => self.handle_rbrace(span),
+            TokenKind::RParen => Some(Event::Error {
+                span,
+                kind: ParseErrorKind::UnexpectedToken,
+            }),
+            _ => None, // Shouldn't happen
         }
     }
 
@@ -1417,6 +1741,262 @@ impl<'src> Parser2<'src> {
                 _ => {}
             }
         }
+    }
+
+    // === Dotted path handling ===
+
+    /// Parse segments from a dotted path like "a.b.c".
+    /// Returns None if the path is invalid (empty segments, leading/trailing dots).
+    fn parse_dotted_path(&self, text: &str, span: Span) -> Option<Vec<(Span, String)>> {
+        let segments: Vec<&str> = text.split('.').collect();
+
+        // Validate: no empty segments
+        if segments.is_empty() || segments.iter().any(|s| s.is_empty()) {
+            return None;
+        }
+
+        // Calculate spans for each segment
+        let mut result = Vec::with_capacity(segments.len());
+        let mut offset = span.start;
+        for segment in segments {
+            let segment_len = segment.len() as u32;
+            let segment_span = Span::new(offset, offset + segment_len);
+            result.push((segment_span, segment.to_string()));
+            offset += segment_len + 1; // +1 for the dot
+        }
+
+        Some(result)
+    }
+
+    /// Start emitting a dotted path. Emits first key and transitions to EmitDottedPath state.
+    fn start_dotted_path(
+        &mut self,
+        segments: Vec<(Span, String)>,
+        full_span: Span,
+    ) -> Option<Event<'src>> {
+        if segments.is_empty() {
+            return Some(Event::Error {
+                span: full_span,
+                kind: ParseErrorKind::InvalidKey,
+            });
+        }
+
+        let (first_span, first_segment) = segments[0].clone();
+
+        if segments.len() == 1 {
+            // Not actually dotted, just a regular key
+            self.state = State::AfterBareKey {
+                key_span: first_span,
+            };
+            return Some(Event::Key {
+                span: first_span,
+                tag: None,
+                payload: Some(Cow::Owned(first_segment)),
+                kind: ScalarKind::Bare,
+            });
+        }
+
+        // Multiple segments - emit first key and ObjectStart, then continue
+        self.event_queue.push_back(Event::ObjectStart {
+            span: first_span,
+            separator: Separator::Newline,
+        });
+
+        self.state = State::EmitDottedPath {
+            segments,
+            current_idx: 1,
+            depth: 1,
+        };
+
+        Some(Event::Key {
+            span: first_span,
+            tag: None,
+            payload: Some(Cow::Owned(first_segment)),
+            kind: ScalarKind::Bare,
+        })
+    }
+
+    fn step_emit_dotted_path(
+        &mut self,
+        segments: Vec<(Span, String)>,
+        current_idx: usize,
+        depth: usize,
+    ) -> Option<Event<'src>> {
+        let (span, segment) = segments[current_idx].clone();
+
+        // Emit EntryStart for this nested entry
+        self.event_queue.push_back(Event::EntryStart);
+
+        if current_idx == segments.len() - 1 {
+            // Last segment - emit key and transition to expecting value
+            // Build full path for validation
+            let path: Vec<String> = segments.iter().map(|(_, s)| s.clone()).collect();
+            let path_span = Span::new(segments[0].0.start, segments.last().unwrap().0.end);
+            self.state = State::AfterDottedPathKey {
+                depth,
+                path,
+                path_span,
+            };
+            Some(Event::Key {
+                span,
+                tag: None,
+                payload: Some(Cow::Owned(segment)),
+                kind: ScalarKind::Bare,
+            })
+        } else {
+            // Not last - emit key, ObjectStart, and continue
+            self.event_queue.push_back(Event::ObjectStart {
+                span,
+                separator: Separator::Newline,
+            });
+            self.state = State::EmitDottedPath {
+                segments,
+                current_idx: current_idx + 1,
+                depth: depth + 1,
+            };
+            Some(Event::Key {
+                span,
+                tag: None,
+                payload: Some(Cow::Owned(segment)),
+                kind: ScalarKind::Bare,
+            })
+        }
+    }
+
+    fn step_after_dotted_path_key(
+        &mut self,
+        depth: usize,
+        path: Vec<String>,
+        path_span: Span,
+    ) -> Option<Event<'src>> {
+        // Expecting value after the last segment of dotted path
+        let t = self.next_token();
+
+        // Determine value kind based on token
+        let value_kind = match t.kind {
+            TokenKind::LBrace | TokenKind::LParen => PathValueKind::Object,
+            _ => PathValueKind::Terminal,
+        };
+
+        // Validate path before emitting value
+        if let Err(err) = self
+            .path_state
+            .check_and_update(&path, path_span, value_kind)
+        {
+            // Emit error and skip the value we already peeked at
+            let error_event = self.emit_path_error(err, path_span);
+
+            // Skip the value token(s) we already consumed the opening for
+            match t.kind {
+                TokenKind::LBrace => self.skip_nested(TokenKind::RBrace),
+                TokenKind::LParen => self.skip_nested(TokenKind::RParen),
+                _ => {} // Scalar values are already consumed
+            }
+
+            // Need to emit EntryEnd and close nested objects
+            self.event_queue.push_back(Event::EntryEnd);
+            self.state = State::CloseDottedPath {
+                remaining: depth - 1,
+            };
+            return Some(error_event);
+        }
+
+        match t.kind {
+            TokenKind::Newline
+            | TokenKind::Eof
+            | TokenKind::RBrace
+            | TokenKind::RParen
+            | TokenKind::Comma => {
+                // Implicit unit value
+                self.event_queue.push_back(Event::Unit {
+                    span: Span::new(t.span.start, t.span.start),
+                });
+                self.event_queue.push_back(Event::EntryEnd);
+                self.state = State::CloseDottedPath {
+                    remaining: depth - 1,
+                };
+                self.handle_boundary_token(t)
+            }
+
+            TokenKind::LBrace => {
+                self.push_object_context(false);
+                self.state = State::ExpectEntry;
+                // After the object closes, we'll need to close the dotted path objects
+                // This is handled by the context stack
+                Some(Event::ObjectStart {
+                    span: t.span,
+                    separator: Separator::Comma,
+                })
+            }
+
+            TokenKind::LParen => {
+                self.context_stack.push(Context::Sequence);
+                self.state = State::ExpectSeqElem;
+                Some(Event::SequenceStart { span: t.span })
+            }
+
+            TokenKind::At => {
+                let ev = self.parse_tag_value(t);
+                if !matches!(self.state, State::AfterTagBoundaryConsumed { .. }) {
+                    self.state = State::AfterValue;
+                }
+                Some(ev)
+            }
+
+            TokenKind::BareScalar => {
+                // Check for attribute syntax
+                self.state = State::AfterBareValue { value_span: t.span };
+                Some(Event::Scalar {
+                    span: t.span,
+                    value: Cow::Borrowed(t.text),
+                    kind: ScalarKind::Bare,
+                })
+            }
+
+            TokenKind::QuotedScalar => {
+                self.state = State::AfterValue;
+                Some(Event::Scalar {
+                    span: t.span,
+                    value: self.unescape_quoted(t.text),
+                    kind: ScalarKind::Quoted,
+                })
+            }
+
+            TokenKind::RawScalar => {
+                self.state = State::AfterValue;
+                Some(Event::Scalar {
+                    span: t.span,
+                    value: Cow::Borrowed(Self::strip_raw_delimiters(t.text)),
+                    kind: ScalarKind::Raw,
+                })
+            }
+
+            TokenKind::HeredocStart => {
+                self.state = State::AfterValue;
+                Some(self.parse_heredoc(t.span))
+            }
+
+            _ => Some(Event::Error {
+                span: t.span,
+                kind: ParseErrorKind::ExpectedValue,
+            }),
+        }
+    }
+
+    fn step_close_dotted_path(&mut self, remaining: usize) -> Option<Event<'src>> {
+        if remaining == 0 {
+            self.state = State::ExpectEntry;
+            return None;
+        }
+
+        // Close one object and one entry
+        self.event_queue.push_back(Event::EntryEnd);
+        self.state = State::CloseDottedPath {
+            remaining: remaining - 1,
+        };
+        Some(Event::ObjectEnd {
+            span: Span::new(0, 0),
+        })
     }
 
     // === String processing ===
@@ -1911,6 +2491,732 @@ EOF value
             events
                 .iter()
                 .any(|e| matches!(e, Event::Scalar { value, .. } if value == "true"))
+        );
+    }
+
+    // Additional tests from old Parser
+
+    #[test]
+    fn test_doc_comment_followed_by_entry_ok() {
+        assert_parse_errors("/// documentation\nkey value");
+    }
+
+    #[test]
+    fn test_doc_comment_before_closing_brace_error() {
+        assert_parse_errors(
+            r#"
+{foo bar
+/// dangling
+^^^^^^^^^^^^ DanglingDocComment
+}
+"#,
+        );
+    }
+
+    #[test]
+    fn test_multiple_doc_comments_before_entry_ok() {
+        assert_parse_errors("/// line 1\n/// line 2\nkey value");
+    }
+
+    #[test]
+    fn test_object_with_entries() {
+        let events = parse("config {host localhost, port 8080}");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"config"));
+        assert!(keys.contains(&"host"));
+        assert!(keys.contains(&"port"));
+    }
+
+    #[test]
+    fn test_nested_sequences() {
+        let events = parse("matrix ((1 2) (3 4))");
+        let seq_starts = events
+            .iter()
+            .filter(|e| matches!(e, Event::SequenceStart { .. }))
+            .count();
+        assert_eq!(seq_starts, 3);
+    }
+
+    #[test]
+    fn test_tagged_sequence() {
+        let events = parse("color @rgb(255 128 0)");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::TagStart { name, .. } if *name == "rgb"))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::SequenceStart { .. }))
+        );
+    }
+
+    #[test]
+    fn test_tagged_scalar() {
+        let events = parse(r#"name @nickname"Bob""#);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::TagStart { name, .. } if *name == "nickname"))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Scalar { value, .. } if value == "Bob"))
+        );
+    }
+
+    #[test]
+    fn test_tag_whitespace_gap() {
+        let events = parse("x @tag\ny {a b}");
+        let tag_events: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, Event::TagStart { .. } | Event::TagEnd))
+            .collect();
+        assert_eq!(tag_events.len(), 2);
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"x"));
+        assert!(keys.contains(&"y"));
+    }
+
+    #[test]
+    fn test_object_in_sequence() {
+        let events = parse("servers ({host a} {host b})");
+        let obj_starts = events
+            .iter()
+            .filter(|e| matches!(e, Event::ObjectStart { .. }))
+            .count();
+        // 3 = implicit root + 2 objects in sequence
+        assert_eq!(obj_starts, 3);
+    }
+
+    #[test]
+    fn test_attribute_values() {
+        let events = parse("config name>app tags>(a b) opts>{x 1}");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"config"));
+        assert!(keys.contains(&"name"));
+        assert!(keys.contains(&"tags"));
+        assert!(keys.contains(&"opts"));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::SequenceStart { .. }))
+        );
+    }
+
+    #[test]
+    fn test_too_many_atoms_with_attributes() {
+        assert_parse_errors(
+            r#"
+spec selector matchLabels app>web tier>frontend
+              ^^^^^^^^^^^ TooManyAtoms
+"#,
+        );
+    }
+
+    #[test]
+    fn test_attribute_no_spaces() {
+        let events = parse("x > y");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"x"));
+    }
+
+    #[test]
+    fn test_explicit_root_after_comment() {
+        let events = parse("// comment\n{a 1}");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::ObjectStart { .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Key { payload: Some(value), .. } if value == "a"))
+        );
+    }
+
+    #[test]
+    fn test_explicit_root_after_doc_comment() {
+        let events = parse("/// doc comment\n{a 1}");
+        assert!(events.iter().any(|e| matches!(e, Event::DocComment { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::ObjectStart { .. }))
+        );
+    }
+
+    #[test]
+    fn test_duplicate_bare_key() {
+        assert_parse_errors(
+            r#"
+{a 1, a 2}
+      ^ DuplicateKey
+"#,
+        );
+    }
+
+    #[test]
+    fn test_duplicate_quoted_key() {
+        assert_parse_errors(
+            r#"
+{"key" 1, "key" 2}
+          ^^^^^ DuplicateKey
+"#,
+        );
+    }
+
+    #[test]
+    fn test_duplicate_key_escape_normalized() {
+        assert_parse_errors(
+            r#"
+{"ab" 1, "a\u{62}" 2}
+         ^^^^^^^^^ DuplicateKey
+"#,
+        );
+    }
+
+    #[test]
+    fn test_duplicate_unit_key() {
+        assert_parse_errors(
+            r#"
+{@ 1, @ 2}
+      ^ DuplicateKey
+"#,
+        );
+    }
+
+    #[test]
+    fn test_duplicate_tagged_key() {
+        assert_parse_errors(
+            r#"
+{@foo 1, @foo 2}
+         ^^^^ DuplicateKey
+"#,
+        );
+    }
+
+    #[test]
+    fn test_different_keys_ok() {
+        assert_parse_errors(r#"{a 1, b 2, c 3}"#);
+    }
+
+    #[test]
+    fn test_duplicate_key_at_root() {
+        assert_parse_errors(
+            r#"
+a 1
+a 2
+^ DuplicateKey
+"#,
+        );
+    }
+
+    #[test]
+    fn test_mixed_separators_comma_then_newline() {
+        assert_parse_errors(
+            r#"
+{a 1, b 2
+         ^ MixedSeparators
+c 3}
+"#,
+        );
+    }
+
+    #[test]
+    fn test_mixed_separators_newline_then_comma() {
+        assert_parse_errors(
+            r#"
+{a 1
+b 2, c 3}
+   ^ MixedSeparators
+"#,
+        );
+    }
+
+    #[test]
+    fn test_consistent_comma_separators() {
+        assert_parse_errors(r#"{a 1, b 2, c 3}"#);
+    }
+
+    #[test]
+    fn test_consistent_newline_separators() {
+        assert_parse_errors(
+            r#"{a 1
+b 2
+c 3}"#,
+        );
+    }
+
+    #[test]
+    fn test_valid_tag_names() {
+        assert_parse_errors("@foo");
+        assert_parse_errors("@_private");
+        assert_parse_errors("@my-tag");
+        assert_parse_errors("@Type123");
+    }
+
+    #[test]
+    fn test_invalid_tag_name_starts_with_hyphen() {
+        assert_parse_errors(
+            r#"
+x @-foo
+   ^^^^ InvalidTagName
+"#,
+        );
+    }
+
+    #[test]
+    fn test_invalid_tag_name_starts_with_dot() {
+        assert_parse_errors(
+            r#"
+x @.foo
+   ^^^^ InvalidTagName
+"#,
+        );
+    }
+
+    #[test]
+    fn test_unicode_escape_4digit_accented() {
+        let events = parse(r#"x "\u00E9""#);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Scalar { value, .. } if value == "é"))
+        );
+    }
+
+    #[test]
+    fn test_unicode_escape_mixed() {
+        let events = parse(r#"x "\u0048\u{65}\u006C\u{6C}\u006F""#);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Scalar { value, .. } if value == "Hello"))
+        );
+    }
+
+    #[test]
+    fn test_invalid_escape_null() {
+        assert_parse_errors(
+            r#"
+x "\0"
+   ^^ InvalidEscape
+"#,
+        );
+    }
+
+    #[test]
+    fn test_invalid_escape_unknown() {
+        assert_parse_errors(
+            r#"
+x "\q"
+   ^^ InvalidEscape
+"#,
+        );
+    }
+
+    #[test]
+    fn test_invalid_escape_multiple() {
+        assert_parse_errors(
+            r#"
+x "\0\q\?"
+   ^^ InvalidEscape
+     ^^ InvalidEscape
+       ^^ InvalidEscape
+"#,
+        );
+    }
+
+    #[test]
+    fn test_valid_escapes_still_work() {
+        let events = parse(r#"x "a\nb\tc\\d\"e""#);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Scalar { value, .. } if value == "a\nb\tc\\d\"e"))
+        );
+        assert_parse_errors(r#"x "a\nb\tc\\d\"e""#);
+    }
+
+    #[test]
+    fn test_invalid_escape_in_key() {
+        assert_parse_errors(
+            r#"
+"\0" value
+ ^^ InvalidEscape
+"#,
+        );
+    }
+
+    #[test]
+    fn test_simple_key_value_with_attributes() {
+        let events = parse("server host>localhost port>8080");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"server"));
+        assert!(keys.contains(&"host"));
+        assert!(keys.contains(&"port"));
+        assert_parse_errors(r#"server host>localhost port>8080"#);
+    }
+
+    #[test]
+    fn test_dotted_path_simple() {
+        let events = parse("a.b value");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, vec!["a", "b"]);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::ObjectStart { .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Scalar { value, .. } if value == "value"))
+        );
+        assert_parse_errors(r#"a.b value"#);
+    }
+
+    #[test]
+    fn test_dotted_path_three_segments() {
+        let events = parse("a.b.c deep");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, vec!["a", "b", "c"]);
+        let obj_starts: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, Event::ObjectStart { .. }))
+            .collect();
+        // 3 = implicit root + 2 from dotted path (a { b { c deep } })
+        assert_eq!(obj_starts.len(), 3);
+        assert_parse_errors(r#"a.b.c deep"#);
+    }
+
+    #[test]
+    fn test_dotted_path_with_implicit_unit() {
+        let events = parse("a.b");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, vec!["a", "b"]);
+        assert!(events.iter().any(|e| matches!(e, Event::Unit { .. })));
+    }
+
+    #[test]
+    fn test_dotted_path_empty_segment() {
+        assert_parse_errors(
+            r#"
+a..b value
+^^^^ InvalidKey
+"#,
+        );
+    }
+
+    #[test]
+    fn test_dotted_path_trailing_dot() {
+        assert_parse_errors(
+            r#"
+a.b. value
+^^^^ InvalidKey
+"#,
+        );
+    }
+
+    #[test]
+    fn test_dotted_path_leading_dot() {
+        assert_parse_errors(
+            r#"
+.a.b value
+^^^^ InvalidKey
+"#,
+        );
+    }
+
+    #[test]
+    fn test_dotted_path_with_object_value() {
+        let events = parse("a.b { c d }");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"a"));
+        assert!(keys.contains(&"b"));
+        assert!(keys.contains(&"c"));
+        assert_parse_errors(r#"a.b { c d }"#);
+    }
+
+    #[test]
+    fn test_dotted_path_with_attributes_value() {
+        let events = parse("selector.matchLabels app>web");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"selector"));
+        assert!(keys.contains(&"matchLabels"));
+        assert!(keys.contains(&"app"));
+        assert_parse_errors(r#"selector.matchLabels app>web"#);
+    }
+
+    #[test]
+    fn test_dot_in_value_is_literal() {
+        let events = parse("key example.com");
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, vec!["key"]);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Scalar { value, .. } if value == "example.com"))
+        );
+        assert_parse_errors(r#"key example.com"#);
+    }
+
+    #[test]
+    fn test_sibling_dotted_paths() {
+        let events = parse("foo.bar.x value1\nfoo.bar.y value2\nfoo.baz value3");
+        assert_parse_errors(
+            r#"foo.bar.x value1
+foo.bar.y value2
+foo.baz value3"#,
+        );
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Key {
+                    payload: Some(value),
+                    ..
+                } => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(keys.contains(&"foo"));
+        assert!(keys.contains(&"bar"));
+        assert!(keys.contains(&"baz"));
+        assert!(keys.contains(&"x"));
+        assert!(keys.contains(&"y"));
+    }
+
+    #[test]
+    fn test_reopen_closed_path_error() {
+        assert_parse_errors(
+            r#"
+foo.bar {}
+foo.baz {}
+foo.bar.x value
+^^^^^^^^^ ReopenedPath
+"#,
+        );
+    }
+
+    #[test]
+    fn test_reopen_nested_closed_path_error() {
+        assert_parse_errors(
+            r#"
+a.b.c {}
+a.b.d {}
+a.x {}
+a.b.e {}
+^^^^^ ReopenedPath
+"#,
+        );
+    }
+
+    #[test]
+    fn test_nest_into_scalar_error() {
+        assert_parse_errors(
+            r#"
+a.b value
+a.b.c deep
+^^^^^ NestIntoTerminal
+"#,
+        );
+    }
+
+    #[test]
+    fn test_different_top_level_paths_ok() {
+        assert_parse_errors(
+            r#"server.host localhost
+database.port 5432"#,
+        );
+    }
+
+    #[test]
+    fn test_bare_key_requires_whitespace_before_brace() {
+        assert_parse_errors(
+            r#"
+config{}
+      ^ MissingWhitespaceBeforeBlock
+"#,
+        );
+    }
+
+    #[test]
+    fn test_bare_key_requires_whitespace_before_paren() {
+        assert_parse_errors(
+            r#"
+items(1 2 3)
+     ^ MissingWhitespaceBeforeBlock
+"#,
+        );
+    }
+
+    #[test]
+    fn test_bare_key_with_whitespace_before_brace_ok() {
+        assert_parse_errors("config {}");
+    }
+
+    #[test]
+    fn test_bare_key_with_whitespace_before_paren_ok() {
+        assert_parse_errors("items (1 2 3)");
+    }
+
+    #[test]
+    fn test_tag_with_brace_no_whitespace_ok() {
+        assert_parse_errors("config @object{}");
+    }
+
+    #[test]
+    fn test_quoted_key_no_whitespace_ok() {
+        assert_parse_errors(r#""config"{}"#);
+    }
+
+    #[test]
+    fn test_minified_styx_with_whitespace() {
+        assert_parse_errors("{server {host localhost,port 8080}}");
+    }
+
+    #[test]
+    fn test_invalid_escape_annotated() {
+        assert_parse_errors(
+            r#"
+x "\0"
+   ^^ InvalidEscape
+"#,
+        );
+    }
+
+    #[test]
+    fn test_mixed_separators_annotated() {
+        assert_parse_errors(
+            r#"
+{a 1, b 2
+         ^ MixedSeparators
+c 3}
+"#,
+        );
+    }
+
+    #[test]
+    fn test_invalid_tag_name_annotated() {
+        assert_parse_errors(
+            r#"
+x @123
+   ^^^ InvalidTagName
+"#,
+        );
+    }
+
+    #[test]
+    fn test_dangling_doc_comment_annotated() {
+        assert_parse_errors(
+            r#"
+foo bar
+/// dangling
+^^^^^^^^^^^^ DanglingDocComment
+"#,
         );
     }
 }
