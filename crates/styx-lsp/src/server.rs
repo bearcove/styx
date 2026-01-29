@@ -733,7 +733,7 @@ impl LanguageServer for StyxLanguageServer {
         }
 
         // Case 4: Try extension for domain-specific definition (e.g., $param → declaration)
-        if let Ok(schema_file) = load_document_schema(&tree, &uri) {
+        if let Ok(schema_file) = load_document_schema(tree, &uri) {
             let schema_id = &schema_file.meta.id;
             tracing::debug!(%schema_id, "Trying extension for definition");
             if let Some(client) = self.extensions.get_client(schema_id).await {
@@ -1317,9 +1317,9 @@ impl LanguageServer for StyxLanguageServer {
                         },
                         message: d.message.clone(),
                         source: d.source.clone(),
-                        code: d.code.as_ref().and_then(|c| match c {
-                            NumberOrString::String(s) => Some(s.clone()),
-                            NumberOrString::Number(n) => Some(n.to_string()),
+                        code: d.code.as_ref().map(|c| match c {
+                            NumberOrString::String(s) => s.clone(),
+                            NumberOrString::Number(n) => n.to_string(),
                         }),
                         data: None, // We don't convert JSON back to styx Value
                     })

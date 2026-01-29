@@ -909,74 +909,6 @@ pub async fn assert_test_file(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_span_markers_basic() {
-        let input = r#"from alisjdf
-     ^^^^^^^ "table not found"
-select {id}"#;
-
-        let (cleaned, markers) = parse_span_markers(input);
-
-        assert_eq!(cleaned, "from alisjdf\nselect {id}");
-        assert_eq!(markers.len(), 1);
-        assert_eq!(markers[0].line, 0); // refers to line 0 after cleaning
-        assert_eq!(markers[0].start_col, 5);
-        assert_eq!(markers[0].end_col, 12);
-        assert_eq!(markers[0].message, "table not found");
-    }
-
-    #[test]
-    fn test_parse_span_markers_multiple() {
-        let input = r#"from bad_table
-     ^^^^^^^^^ "unknown table"
-select {bad_col}
-        ^^^^^^^ "unknown column""#;
-
-        let (cleaned, markers) = parse_span_markers(input);
-
-        assert_eq!(cleaned, "from bad_table\nselect {bad_col}");
-        assert_eq!(markers.len(), 2);
-
-        assert_eq!(markers[0].line, 0);
-        assert_eq!(markers[0].start_col, 5);
-        assert_eq!(markers[0].message, "unknown table");
-
-        assert_eq!(markers[1].line, 1);
-        assert_eq!(markers[1].start_col, 8);
-        assert_eq!(markers[1].message, "unknown column");
-    }
-
-    #[test]
-    fn test_parse_span_markers_no_message() {
-        let input = r#"from table
-     ^^^^^
-select {id}"#;
-
-        let (cleaned, markers) = parse_span_markers(input);
-
-        assert_eq!(cleaned, "from table\nselect {id}");
-        assert_eq!(markers.len(), 1);
-        assert_eq!(markers[0].message, ""); // empty message matches any
-    }
-
-    #[test]
-    fn test_parse_span_markers_not_a_marker() {
-        // Lines with content before ^ are not markers
-        let input = r#"from table
-code ^ here
-select {id}"#;
-
-        let (cleaned, markers) = parse_span_markers(input);
-
-        assert_eq!(cleaned, input); // unchanged
-        assert_eq!(markers.len(), 0);
-    }
-}
-
 /// Run all tests in a test file with a custom document URI for initialization.
 ///
 /// This variant allows specifying a document URI that points to a real project
@@ -1060,5 +992,73 @@ pub async fn assert_test_file_with_uri(
 
     if !result.all_passed() {
         panic!("\n{}", result.report());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_span_markers_basic() {
+        let input = r#"from alisjdf
+     ^^^^^^^ "table not found"
+select {id}"#;
+
+        let (cleaned, markers) = parse_span_markers(input);
+
+        assert_eq!(cleaned, "from alisjdf\nselect {id}");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].line, 0); // refers to line 0 after cleaning
+        assert_eq!(markers[0].start_col, 5);
+        assert_eq!(markers[0].end_col, 12);
+        assert_eq!(markers[0].message, "table not found");
+    }
+
+    #[test]
+    fn test_parse_span_markers_multiple() {
+        let input = r#"from bad_table
+     ^^^^^^^^^ "unknown table"
+select {bad_col}
+        ^^^^^^^ "unknown column""#;
+
+        let (cleaned, markers) = parse_span_markers(input);
+
+        assert_eq!(cleaned, "from bad_table\nselect {bad_col}");
+        assert_eq!(markers.len(), 2);
+
+        assert_eq!(markers[0].line, 0);
+        assert_eq!(markers[0].start_col, 5);
+        assert_eq!(markers[0].message, "unknown table");
+
+        assert_eq!(markers[1].line, 1);
+        assert_eq!(markers[1].start_col, 8);
+        assert_eq!(markers[1].message, "unknown column");
+    }
+
+    #[test]
+    fn test_parse_span_markers_no_message() {
+        let input = r#"from table
+     ^^^^^
+select {id}"#;
+
+        let (cleaned, markers) = parse_span_markers(input);
+
+        assert_eq!(cleaned, "from table\nselect {id}");
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].message, ""); // empty message matches any
+    }
+
+    #[test]
+    fn test_parse_span_markers_not_a_marker() {
+        // Lines with content before ^ are not markers
+        let input = r#"from table
+code ^ here
+select {id}"#;
+
+        let (cleaned, markers) = parse_span_markers(input);
+
+        assert_eq!(cleaned, input); // unchanged
+        assert_eq!(markers.len(), 0);
     }
 }

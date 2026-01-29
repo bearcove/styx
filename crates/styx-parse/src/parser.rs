@@ -531,7 +531,7 @@ impl<'src> Parser<'src> {
                 }
 
                 // Bare scalars - check for attribute syntax (key=value)
-                // parser[impl attr.syntax] parser[impl entry.keypath.attributes]
+                // parser[impl attr.syntax] parser[impl entry.path.attributes]
                 TokenKind::BareScalar => {
                     if self.is_attribute_start() {
                         atoms.push(self.parse_attributes());
@@ -2745,7 +2745,7 @@ mod tests {
         assert!(keys.contains(&"port"), "Missing key 'port'");
     }
 
-    // parser[verify entry.keypath.attributes]
+    // parser[verify entry.path.attributes]
     #[test]
     fn test_too_many_atoms_with_attributes() {
         // parser[verify entry.toomany]

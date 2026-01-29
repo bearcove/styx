@@ -322,7 +322,7 @@ impl<'src> CstParser<'src> {
 
     /// Parse a single attribute: `key>value`
     ///
-    /// Per spec r[attr.syntax]: "The `>` has no spaces around it."
+    /// Per spec parser[attr.syntax]: "The `>` has no spaces around it."
     fn parse_attribute(&mut self) {
         self.builder.start_node(SyntaxKind::ATTRIBUTE.into());
 
