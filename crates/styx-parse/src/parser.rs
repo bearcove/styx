@@ -2171,6 +2171,199 @@ mod tests {
         events
     }
 
+    /// Parse source with error annotations and assert errors match.
+    ///
+    /// Source can contain error annotations on lines following the source:
+    /// ```
+    /// r#"
+    /// {server {host localhost port 8080}}
+    ///                         ^^^^ TooManyAtoms
+    /// "#
+    /// ```
+    ///
+    /// The carets (`^`) indicate the span where an error is expected,
+    /// and the error kind name follows the carets.
+    fn assert_parse_errors(annotated_source: &str) {
+        let mut source_lines = Vec::new();
+        let mut expected_errors = Vec::new(); // Vec<(line_index, start_col, end_col, error_kind)>
+
+        let lines: Vec<&str> = annotated_source.lines().collect();
+        let mut i = 0;
+        while i < lines.len() {
+            let line = lines[i];
+
+            // Check if this is an annotation line (starts with whitespace followed by ^)
+            if line.trim_start().starts_with('^') {
+                // Parse annotation: "    ^^^^ ErrorKind"
+                let trimmed = line.trim_start();
+                let caret_start = line.len() - trimmed.len();
+
+                // Count carets
+                let caret_count = trimmed.chars().take_while(|&c| c == '^').count();
+
+                // Extract error kind name (everything after carets, trimmed)
+                let after_carets = &trimmed[caret_count..].trim_start();
+                let error_kind_name = after_carets.split_whitespace().next().unwrap_or("");
+
+                if !error_kind_name.is_empty() && caret_count > 0 {
+                    expected_errors.push((
+                        source_lines.len().saturating_sub(1), // Apply to previous source line
+                        caret_start,
+                        caret_start + caret_count,
+                        error_kind_name.to_string(),
+                    ));
+                }
+                i += 1;
+            } else {
+                // This is a source line
+                source_lines.push(line);
+                i += 1;
+
+                // Collect any following annotation lines for this source line
+                while i < lines.len() {
+                    let next_line = lines[i];
+                    let trimmed = next_line.trim_start();
+                    if trimmed.starts_with('^') {
+                        let caret_start = next_line.len() - trimmed.len();
+                        let caret_count = trimmed.chars().take_while(|&c| c == '^').count();
+                        let after_carets = &trimmed[caret_count..].trim_start();
+                        let error_kind_name = after_carets.split_whitespace().next().unwrap_or("");
+
+                        if !error_kind_name.is_empty() && caret_count > 0 {
+                            expected_errors.push((
+                                source_lines.len() - 1,
+                                caret_start,
+                                caret_start + caret_count,
+                                error_kind_name.to_string(),
+                            ));
+                        }
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Build source without annotation lines
+        let source = source_lines.join("\n");
+
+        // Parse and collect errors
+        let events = parse(&source);
+        let actual_errors: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Error { span, kind } => Some((*span, format!("{:?}", kind))),
+                _ => None,
+            })
+            .collect();
+
+        // Convert actual error spans to line/column for comparison
+        fn span_to_line_col(source: &str, span: Span) -> Option<(usize, usize, usize)> {
+            let mut line_start = 0;
+            for (line_idx, line) in source.lines().enumerate() {
+                let line_end = line_start + line.len();
+                let span_start = span.start as usize;
+                let span_end = span.end as usize;
+
+                if span_start >= line_start && span_start <= line_end {
+                    let col_start = span_start - line_start;
+                    let col_end = (span_end - line_start).min(line.len());
+                    return Some((line_idx, col_start, col_end));
+                }
+                line_start = line_end + 1; // +1 for newline
+            }
+            None
+        }
+
+        // Check each expected error
+        let mut unmatched_expected = Vec::new();
+        let mut matched_actual = vec![false; actual_errors.len()];
+
+        for (exp_line, exp_start, exp_end, exp_kind) in &expected_errors {
+            let exp_kind_lower = exp_kind.to_lowercase();
+            let mut found = false;
+
+            for (i, (span, actual_kind)) in actual_errors.iter().enumerate() {
+                if matched_actual[i] {
+                    continue;
+                }
+
+                if let Some((act_line, act_start, act_end)) = span_to_line_col(&source, *span) {
+                    let actual_kind_lower = actual_kind.to_lowercase();
+
+                    // Check if this actual error matches the expected one
+                    if act_line == *exp_line
+                        && act_start <= *exp_end
+                        && act_end >= *exp_start
+                        && actual_kind_lower.contains(&exp_kind_lower)
+                    {
+                        matched_actual[i] = true;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+
+            if !found {
+                unmatched_expected.push((*exp_line, *exp_start, *exp_end, exp_kind.clone()));
+            }
+        }
+
+        // Collect unmatched actual errors
+        let unmatched_actual: Vec<_> = actual_errors
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !matched_actual[*i])
+            .map(|(_, (span, kind))| {
+                let (line, start, end) = span_to_line_col(&source, *span).unwrap_or((0, 0, 0));
+                (line, start, end, kind.clone())
+            })
+            .collect();
+
+        // Build error message if mismatches found
+        if !unmatched_expected.is_empty() || !unmatched_actual.is_empty() {
+            let mut msg = String::new();
+            msg.push_str("Parse error assertion failed:\n\n");
+            msg.push_str("Source:\n");
+            for (i, line) in source.lines().enumerate() {
+                msg.push_str(&format!("  {}: {}\n", i, line));
+            }
+
+            if !unmatched_expected.is_empty() {
+                msg.push_str("\nExpected errors not found:\n");
+                for (line, start, end, kind) in unmatched_expected {
+                    msg.push_str(&format!(
+                        "  Line {}, columns {}-{}: {}\n",
+                        line, start, end, kind
+                    ));
+                }
+            }
+
+            if !unmatched_actual.is_empty() {
+                msg.push_str("\nUnexpected errors found:\n");
+                for (line, start, end, kind) in unmatched_actual {
+                    msg.push_str(&format!(
+                        "  Line {}, columns {}-{}: {}\n",
+                        line, start, end, kind
+                    ));
+                }
+            }
+
+            msg.push_str("\nAll actual errors:\n");
+            for (span, kind) in &actual_errors {
+                if let Some((line, start, end)) = span_to_line_col(&source, *span) {
+                    msg.push_str(&format!(
+                        "  Line {}, columns {}-{}: {}\n",
+                        line, start, end, kind
+                    ));
+                }
+            }
+
+            panic!("{}", msg);
+        }
+    }
+
     /// Parse and log events for debugging
     #[allow(dead_code)]
     fn parse_debug(source: &str) -> Vec<Event<'_>> {
@@ -3599,6 +3792,17 @@ mod tests {
                 }
             )),
             "minified styx with whitespace should work"
+        );
+    }
+
+    #[test]
+    fn test_missing_comma_rejected() {
+        // Too many atoms, need a comma between localhost and port
+        assert_parse_errors(
+            r#"
+{server {host localhost port 8080}}
+                        ^^^^ TooManyAtoms
+"#,
         );
     }
 }
