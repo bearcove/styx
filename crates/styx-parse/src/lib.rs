@@ -23,6 +23,7 @@ pub mod callback;
 pub mod event;
 mod lexer;
 pub mod parser;
+pub mod parser2;
 mod span;
 mod token;
 
@@ -30,5 +31,6 @@ pub use callback::ParseCallback;
 pub use event::{Event, ParseErrorKind, ScalarKind, Separator};
 pub use lexer::Lexer;
 pub use parser::Parser;
+pub use parser2::Parser2;
 pub use span::Span;
 pub use token::{Token, TokenKind};
