@@ -2324,41 +2324,124 @@ mod tests {
         // Build error message if mismatches found
         if !unmatched_expected.is_empty() || !unmatched_actual.is_empty() {
             let mut msg = String::new();
-            msg.push_str("Parse error assertion failed:\n\n");
-            msg.push_str("Source:\n");
+            msg.push_str("╔══════════════════════════════════════════════════════════════════════════════╗\n");
+            msg.push_str("║                     PARSE ERROR ASSERTION FAILED                             ║\n");
+            msg.push_str("╚══════════════════════════════════════════════════════════════════════════════╝\n\n");
+
+            // Show the source
+            msg.push_str("┌──────────────────────────────────────────────────────────────────────────────┐\n");
+            msg.push_str("│ INPUT SOURCE                                                                 │\n");
+            msg.push_str("└──────────────────────────────────────────────────────────────────────────────┘\n");
             for (i, line) in source.lines().enumerate() {
-                msg.push_str(&format!("  {}: {}\n", i, line));
+                msg.push_str(&format!("  {} │ {}\n", i, line));
             }
 
-            if !unmatched_expected.is_empty() {
-                msg.push_str("\nExpected errors not found:\n");
-                for (line, start, end, kind) in unmatched_expected {
+            // Show what we EXPECTED (source annotated with expected errors)
+            msg.push_str("\n");
+            msg.push_str("┌──────────────────────────────────────────────────────────────────────────────┐\n");
+            msg.push_str("│ EXPECTED ERRORS (from test annotations)                                      │\n");
+            msg.push_str("└──────────────────────────────────────────────────────────────────────────────┘\n");
+            let max_line_len = source.lines().map(|l| l.len()).max().unwrap_or(0);
+            for (line_idx, line) in source.lines().enumerate() {
+                msg.push_str(&format!("  {} │ {}\n", line_idx, line));
+                // Find expected errors for this line
+                let line_errors: Vec<_> = expected_errors
+                    .iter()
+                    .filter(|(l, _, _, _)| *l == line_idx)
+                    .collect();
+                if !line_errors.is_empty() {
+                    let mut caret_line = vec![' '; max_line_len + 4];
+                    for (_, start, end, kind) in line_errors {
+                        for i in *start..*end {
+                            if i < caret_line.len() {
+                                caret_line[i] = '^';
+                            }
+                        }
+                        // Add error kind at the end
+                        let kind_str = format!(" {}", kind);
+                        for (i, c) in kind_str.chars().enumerate() {
+                            if *end + i < caret_line.len() {
+                                caret_line[*end + i] = c;
+                            } else {
+                                caret_line.push(c);
+                            }
+                        }
+                    }
                     msg.push_str(&format!(
-                        "  Line {}, columns {}-{}: {}\n",
+                        "    │ {}\n",
+                        caret_line.iter().collect::<String>().trim_end()
+                    ));
+                }
+            }
+
+            // Show what we ACTUALLY GOT (source annotated with actual errors)
+            msg.push_str("\n");
+            msg.push_str("┌──────────────────────────────────────────────────────────────────────────────┐\n");
+            msg.push_str("│ ACTUAL ERRORS (from parser)                                                  │\n");
+            msg.push_str("└──────────────────────────────────────────────────────────────────────────────┘\n");
+            for (line_idx, line) in source.lines().enumerate() {
+                msg.push_str(&format!("  {} │ {}\n", line_idx, line));
+                // Find actual errors for this line
+                let line_errors: Vec<_> = actual_errors
+                    .iter()
+                    .filter_map(|(span, kind)| {
+                        span_to_line_col(&source, *span).map(|(l, s, e)| (l, s, e, kind.clone()))
+                    })
+                    .filter(|(l, _, _, _)| *l == line_idx)
+                    .collect();
+                if !line_errors.is_empty() {
+                    let mut caret_line = vec![' '; max_line_len + 4];
+                    for (_, start, end, kind) in line_errors {
+                        for i in start..end.max(start + 1) {
+                            if i < caret_line.len() {
+                                caret_line[i] = '^';
+                            }
+                        }
+                        // Add error kind at the end
+                        let kind_str = format!(" {}", kind);
+                        for (i, c) in kind_str.chars().enumerate() {
+                            if end + i < caret_line.len() {
+                                caret_line[end + i] = c;
+                            } else {
+                                caret_line.push(c);
+                            }
+                        }
+                    }
+                    msg.push_str(&format!(
+                        "    │ {}\n",
+                        caret_line.iter().collect::<String>().trim_end()
+                    ));
+                }
+            }
+
+            // Summary of mismatches
+            msg.push_str("\n");
+            msg.push_str("┌──────────────────────────────────────────────────────────────────────────────┐\n");
+            msg.push_str("│ MISMATCH SUMMARY                                                             │\n");
+            msg.push_str("└──────────────────────────────────────────────────────────────────────────────┘\n");
+
+            if !unmatched_expected.is_empty() {
+                msg.push_str("\n  ❌ Expected but NOT found:\n");
+                for (line, start, end, kind) in &unmatched_expected {
+                    msg.push_str(&format!(
+                        "     • Line {}, columns {}-{}: {}\n",
                         line, start, end, kind
                     ));
                 }
             }
 
             if !unmatched_actual.is_empty() {
-                msg.push_str("\nUnexpected errors found:\n");
-                for (line, start, end, kind) in unmatched_actual {
+                msg.push_str("\n  ❌ Found but NOT expected:\n");
+                for (line, start, end, kind) in &unmatched_actual {
                     msg.push_str(&format!(
-                        "  Line {}, columns {}-{}: {}\n",
+                        "     • Line {}, columns {}-{}: {}\n",
                         line, start, end, kind
                     ));
                 }
             }
 
-            msg.push_str("\nAll actual errors:\n");
-            for (span, kind) in &actual_errors {
-                if let Some((line, start, end)) = span_to_line_col(&source, *span) {
-                    msg.push_str(&format!(
-                        "  Line {}, columns {}-{}: {}\n",
-                        line, start, end, kind
-                    ));
-                }
-            }
+            msg.push_str("\n");
+            msg.push_str("════════════════════════════════════════════════════════════════════════════════\n");
 
             panic!("{}", msg);
         }
@@ -3802,6 +3885,51 @@ mod tests {
             r#"
 {server {host localhost port 8080}}
                         ^^^^ TooManyAtoms
+"#,
+        );
+    }
+
+    // Example: annotation-style error testing for various error types
+
+    #[test]
+    fn test_invalid_escape_annotated() {
+        assert_parse_errors(
+            r#"
+x "\0"
+    ^^ InvalidEscape
+"#,
+        );
+    }
+
+    #[test]
+    fn test_mixed_separators_annotated() {
+        // Error is at the newline (position 9 in line 1) where we switch from comma to newline mode
+        assert_parse_errors(
+            r#"
+{a 1, b 2
+         ^ MixedSeparators
+c 3}
+"#,
+        );
+    }
+
+    #[test]
+    fn test_invalid_tag_name_annotated() {
+        assert_parse_errors(
+            r#"
+x @123
+  ^^^^ InvalidTagName
+"#,
+        );
+    }
+
+    #[test]
+    fn test_dangling_doc_comment_annotated() {
+        assert_parse_errors(
+            r#"
+foo bar
+/// dangling
+^^^^^^^^^^^^ DanglingDocComment
 "#,
         );
     }
