@@ -2359,26 +2359,13 @@ mod tests {
     #[test]
     fn test_too_many_atoms() {
         // parser[verify entry.toomany]
-        // 3+ atoms should produce an error
-        let events = parse("a b c");
-        // Should produce: key=a, value=b, error on c
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, Event::Key { payload: Some(value), .. } if value == "a"))
+        // 3+ atoms should produce an error on `c`
+        assert_parse_errors(
+            r#"
+a b c
+    ^ TooManyAtoms
+"#,
         );
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, Event::Scalar { value, .. } if value == "b"))
-        );
-        assert!(events.iter().any(|e| matches!(
-            e,
-            Event::Error {
-                kind: ParseErrorKind::TooManyAtoms,
-                ..
-            }
-        )));
     }
 
     #[test]
@@ -2437,61 +2424,40 @@ mod tests {
     // parser[verify comment.doc]
     #[test]
     fn test_doc_comment_followed_by_entry_ok() {
-        let events = parse("/// documentation\nkey value");
-        // Doc comment followed by entry is valid
-        assert!(events.iter().any(|e| matches!(e, Event::DocComment { .. })));
-        assert!(!events.iter().any(|e| matches!(
-            e,
-            Event::Error {
-                kind: ParseErrorKind::DanglingDocComment,
-                ..
-            }
-        )));
+        // Doc comment followed by entry is valid - no errors
+        assert_parse_errors("/// documentation\nkey value");
     }
 
     // parser[verify comment.doc]
     #[test]
     fn test_doc_comment_at_eof_error() {
-        let events = parse("foo bar\n/// dangling");
-        assert!(events.iter().any(|e| matches!(
-            e,
-            Event::Error {
-                kind: ParseErrorKind::DanglingDocComment,
-                ..
-            }
-        )));
+        assert_parse_errors(
+            r#"
+foo bar
+/// dangling
+^^^^^^^^^^^^ DanglingDocComment
+"#,
+        );
     }
 
     // parser[verify comment.doc]
     #[test]
     fn test_doc_comment_before_closing_brace_error() {
-        let events = parse("{foo bar\n/// dangling\n}");
-        assert!(events.iter().any(|e| matches!(
-            e,
-            Event::Error {
-                kind: ParseErrorKind::DanglingDocComment,
-                ..
-            }
-        )));
+        assert_parse_errors(
+            r#"
+{foo bar
+/// dangling
+^^^^^^^^^^^^ DanglingDocComment
+}
+"#,
+        );
     }
 
     // parser[verify comment.doc]
     #[test]
     fn test_multiple_doc_comments_before_entry_ok() {
-        let events = parse("/// line 1\n/// line 2\nkey value");
-        // Multiple consecutive doc comments before entry is fine
-        let doc_count = events
-            .iter()
-            .filter(|e| matches!(e, Event::DocComment { .. }))
-            .count();
-        assert_eq!(doc_count, 2);
-        assert!(!events.iter().any(|e| matches!(
-            e,
-            Event::Error {
-                kind: ParseErrorKind::DanglingDocComment,
-                ..
-            }
-        )));
+        // Multiple consecutive doc comments before entry is fine - no errors
+        assert_parse_errors("/// line 1\n/// line 2\nkey value");
     }
 
     // parser[verify object.syntax]
@@ -2750,17 +2716,11 @@ mod tests {
     fn test_too_many_atoms_with_attributes() {
         // parser[verify entry.toomany]
         // Old key-path syntax is now an error
-        let events = parse("spec selector matchLabels app>web tier>frontend");
-        // Should produce error for too many atoms
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::TooManyAtoms,
-                    ..
-                }
-            )),
-            "Should have TooManyAtoms error"
+        assert_parse_errors(
+            r#"
+spec selector matchLabels app>web tier>frontend
+              ^^^^^^^^^^^ TooManyAtoms
+"#,
         );
     }
 
@@ -2841,7 +2801,7 @@ mod tests {
         assert_parse_errors(
             r#"
 {"key" 1, "key" 2}
-           ^ DuplicateKey
+          ^^^^^ DuplicateKey
 "#,
         );
     }
@@ -2853,7 +2813,7 @@ mod tests {
         assert_parse_errors(
             r#"
 {"ab" 1, "a\u{62}" 2}
-                  ^ DuplicateKey
+         ^^^^^^^^^ DuplicateKey
 "#,
         );
     }
@@ -2920,7 +2880,7 @@ c 3}
             r#"
 {a 1
 b 2, c 3}
-    ^ MixedSeparators
+   ^ MixedSeparators
 "#,
         );
     }
@@ -2947,36 +2907,21 @@ c 3}"#,
     #[test]
     fn test_valid_tag_names() {
         // Valid tag names should not produce errors
-        assert!(
-            !parse("@foo")
-                .iter()
-                .any(|e| matches!(e, Event::Error { .. })),
-            "@foo should be valid"
-        );
-        assert!(
-            !parse("@_private")
-                .iter()
-                .any(|e| matches!(e, Event::Error { .. })),
-            "@_private should be valid"
-        );
-        // @Some.Type is now invalid since dots are not allowed in tag names
-        assert!(
-            parse("@Some.Type")
-                .iter()
-                .any(|e| matches!(e, Event::Error { .. })),
-            "@Some.Type should be invalid (dots not allowed)"
-        );
-        assert!(
-            !parse("@my-tag")
-                .iter()
-                .any(|e| matches!(e, Event::Error { .. })),
-            "@my-tag should be valid"
-        );
-        assert!(
-            !parse("@Type123")
-                .iter()
-                .any(|e| matches!(e, Event::Error { .. })),
-            "@Type123 should be valid"
+        assert_parse_errors("@foo");
+        assert_parse_errors("@_private");
+        assert_parse_errors("@my-tag");
+        assert_parse_errors("@Type123");
+    }
+
+    // parser[verify tag.syntax]
+    #[test]
+    fn test_tag_with_dot_invalid() {
+        // @Some.Type is invalid since dots are not allowed in tag names
+        assert_parse_errors(
+            r#"
+@Some.Type
+ ^^^^^^^^^ InvalidTagName
+"#,
         );
     }
 
@@ -2986,7 +2931,7 @@ c 3}"#,
         assert_parse_errors(
             r#"
 x @123
-  ^^^^ InvalidTagName
+   ^^^ InvalidTagName
 "#,
         );
     }
@@ -2997,7 +2942,7 @@ x @123
         assert_parse_errors(
             r#"
 x @-foo
-  ^^^^^ InvalidTagName
+   ^^^^ InvalidTagName
 "#,
         );
     }
@@ -3008,7 +2953,7 @@ x @-foo
         assert_parse_errors(
             r#"
 x @.foo
-  ^^^^^ InvalidTagName
+   ^^^^ InvalidTagName
 "#,
         );
     }
@@ -3068,7 +3013,7 @@ x @.foo
         assert_parse_errors(
             r#"
 <<EOF
-^^^^^ InvalidKey
+^^^^^^ InvalidKey
 key
 EOF value
 "#,
@@ -3082,7 +3027,7 @@ EOF value
         assert_parse_errors(
             r#"
 x "\0"
-    ^^ InvalidEscape
+   ^^ InvalidEscape
 "#,
         );
     }
@@ -3094,7 +3039,7 @@ x "\0"
         assert_parse_errors(
             r#"
 x "\q"
-    ^^ InvalidEscape
+   ^^ InvalidEscape
 "#,
         );
     }
@@ -3103,22 +3048,13 @@ x "\q"
     #[test]
     fn test_invalid_escape_multiple() {
         // Multiple invalid escapes should all be reported
-        let events = parse(r#"x "\0\q\?""#);
-        let invalid_escapes: Vec<_> = events
-            .iter()
-            .filter_map(|e| match e {
-                Event::Error {
-                    kind: ParseErrorKind::InvalidEscape(seq),
-                    ..
-                } => Some(seq.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            invalid_escapes.len(),
-            3,
-            "Should report 3 invalid escapes, got: {:?}",
-            invalid_escapes
+        assert_parse_errors(
+            r#"
+x "\0\q\?"
+   ^^ InvalidEscape
+     ^^ InvalidEscape
+       ^^ InvalidEscape
+"#,
         );
     }
 
@@ -3266,7 +3202,7 @@ x "\q"
         assert_parse_errors(
             r#"
 a..b value
-  ^ InvalidKey
+^^^^ InvalidKey
 "#,
         );
     }
@@ -3278,7 +3214,7 @@ a..b value
         assert_parse_errors(
             r#"
 a.b. value
-    ^ InvalidKey
+^^^^ InvalidKey
 "#,
         );
     }
@@ -3290,7 +3226,7 @@ a.b. value
         assert_parse_errors(
             r#"
 .a.b value
-^ InvalidKey
+^^^^ InvalidKey
 "#,
         );
     }
@@ -3404,7 +3340,7 @@ foo.baz value3"#,
 foo.bar {}
 foo.baz {}
 foo.bar.x value
-    ^^^ ReopenedPath
+^^^^^^^^^ ReopenedPath
 "#,
         );
     }
@@ -3419,7 +3355,7 @@ a.b.c {}
 a.b.d {}
 a.x {}
 a.b.e {}
-  ^^^ ReopenedPath
+^^^^^ ReopenedPath
 "#,
         );
     }
@@ -3432,7 +3368,7 @@ a.b.e {}
             r#"
 a.b value
 a.b.c deep
-^ NestIntoTerminal
+^^^^^ NestIntoTerminal
 "#,
         );
     }
@@ -3454,7 +3390,7 @@ database.port 5432"#,
         assert_parse_errors(
             r#"
 config{}
-     ^ MissingWhitespaceBeforeBlock
+      ^ MissingWhitespaceBeforeBlock
 "#,
         );
     }
@@ -3474,86 +3410,36 @@ items(1 2 3)
     // parser[verify entry.whitespace]
     #[test]
     fn test_bare_key_with_whitespace_before_brace_ok() {
-        // `key {}` with whitespace should be fine
-        let events = parse("config {}");
-        assert!(
-            !events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
-                    ..
-                }
-            )),
-            "config {{}} with whitespace should not error"
-        );
+        // `key {}` with whitespace should be fine - no errors
+        assert_parse_errors("config {}");
     }
 
     // parser[verify entry.whitespace]
     #[test]
     fn test_bare_key_with_whitespace_before_paren_ok() {
-        // `key ()` with whitespace should be fine
-        let events = parse("items (1 2 3)");
-        assert!(
-            !events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
-                    ..
-                }
-            )),
-            "items () with whitespace should not error"
-        );
+        // `key ()` with whitespace should be fine - no errors
+        assert_parse_errors("items (1 2 3)");
     }
 
     // parser[verify entry.whitespace]
     #[test]
     fn test_tag_with_brace_no_whitespace_ok() {
-        // `@tag{}` (tag with object payload) should NOT require whitespace
-        let events = parse("config @object{}");
-        assert!(
-            !events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
-                    ..
-                }
-            )),
-            "@tag{{}} should not require whitespace"
-        );
+        // `@tag{}` (tag with object payload) should NOT require whitespace - no errors
+        assert_parse_errors("config @object{}");
     }
 
     // parser[verify entry.whitespace]
     #[test]
     fn test_quoted_key_no_whitespace_ok() {
-        // `"key"{}` - quoted keys don't have this restriction
-        let events = parse(r#""config"{}"#);
-        assert!(
-            !events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
-                    ..
-                }
-            )),
-            "quoted key before {{}} should not require whitespace"
-        );
+        // `"key"{}` - quoted keys don't have this restriction - no errors
+        assert_parse_errors(r#""config"{}"#);
     }
 
     // parser[verify entry.whitespace]
     #[test]
     fn test_minified_styx_with_whitespace() {
-        // Minified Styx should work with required whitespace
-        let events = parse("{server {host localhost,port 8080}}");
-        assert!(
-            !events.iter().any(|e| matches!(
-                e,
-                Event::Error {
-                    kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
-                    ..
-                }
-            )),
-            "minified styx with whitespace should work"
-        );
+        // Minified Styx should work with required whitespace - no errors
+        assert_parse_errors("{server {host localhost,port 8080}}");
     }
 
     #[test]
@@ -3574,14 +3460,14 @@ items(1 2 3)
         assert_parse_errors(
             r#"
 x "\0"
-    ^^ InvalidEscape
+   ^^ InvalidEscape
 "#,
         );
     }
 
     #[test]
     fn test_mixed_separators_annotated() {
-        // Error is at the newline (position 9 in line 1) where we switch from comma to newline mode
+        // Error is at the newline where we switch from comma to newline mode
         assert_parse_errors(
             r#"
 {a 1, b 2
@@ -3596,7 +3482,7 @@ c 3}
         assert_parse_errors(
             r#"
 x @123
-  ^^^^ InvalidTagName
+   ^^^ InvalidTagName
 "#,
         );
     }

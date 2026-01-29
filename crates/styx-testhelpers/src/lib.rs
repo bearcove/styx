@@ -228,12 +228,16 @@ fn span_to_line_col(source: &str, span: Range<usize>) -> Option<(usize, usize, u
     let mut line_start = 0;
     for (line_idx, line) in source.lines().enumerate() {
         let line_end = line_start + line.len();
+        // Include the newline character in this line's range for span matching
+        // This allows spans that point to the newline to be attributed to this line
+        let line_end_with_newline = line_end + 1;
         let span_start = span.start;
         let span_end = span.end;
 
-        if span_start >= line_start && span_start <= line_end {
+        if span_start >= line_start && span_start < line_end_with_newline {
             let col_start = span_start - line_start;
-            let col_end = (span_end - line_start).min(line.len());
+            // Allow col_end to extend to line.len() + 1 to cover the newline position
+            let col_end = (span_end - line_start).min(line.len() + 1);
             return Some((line_idx, col_start, col_end));
         }
         line_start = line_end + 1;
