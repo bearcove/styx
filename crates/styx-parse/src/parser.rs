@@ -2162,8 +2162,8 @@ impl PathState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ariadne::{CharSet, Color, Config, Label, Report, ReportKind, Source};
     use facet_testhelpers::test;
+    use styx_testhelpers::{ActualError, assert_annotated_errors, source_without_annotations};
 
     fn format_event(event: &Event<'_>) -> String {
         match event {
@@ -2240,270 +2240,42 @@ mod tests {
     /// The carets (`^`) indicate the span where an error is expected,
     /// and the error kind name follows the carets.
     fn assert_parse_errors(annotated_source: &str) {
-        let mut source_lines = Vec::new();
-        let mut expected_errors = Vec::new(); // Vec<(line_index, start_col, end_col, error_kind)>
-
-        let lines: Vec<&str> = annotated_source.lines().collect();
-        let mut i = 0;
-        while i < lines.len() {
-            let line = lines[i];
-
-            // Check if this is an annotation line (starts with whitespace followed by ^)
-            if line.trim_start().starts_with('^') {
-                // Parse annotation: "    ^^^^ ErrorKind"
-                let trimmed = line.trim_start();
-                let caret_start = line.len() - trimmed.len();
-
-                // Count carets
-                let caret_count = trimmed.chars().take_while(|&c| c == '^').count();
-
-                // Extract error kind name (everything after carets, trimmed)
-                let after_carets = &trimmed[caret_count..].trim_start();
-                let error_kind_name = after_carets.split_whitespace().next().unwrap_or("");
-
-                if !error_kind_name.is_empty() && caret_count > 0 {
-                    expected_errors.push((
-                        source_lines.len().saturating_sub(1), // Apply to previous source line
-                        caret_start,
-                        caret_start + caret_count,
-                        error_kind_name.to_string(),
-                    ));
-                }
-                i += 1;
-            } else {
-                // This is a source line
-                source_lines.push(line);
-                i += 1;
-
-                // Collect any following annotation lines for this source line
-                while i < lines.len() {
-                    let next_line = lines[i];
-                    let trimmed = next_line.trim_start();
-                    if trimmed.starts_with('^') {
-                        let caret_start = next_line.len() - trimmed.len();
-                        let caret_count = trimmed.chars().take_while(|&c| c == '^').count();
-                        let after_carets = &trimmed[caret_count..].trim_start();
-                        let error_kind_name = after_carets.split_whitespace().next().unwrap_or("");
-
-                        if !error_kind_name.is_empty() && caret_count > 0 {
-                            expected_errors.push((
-                                source_lines.len() - 1,
-                                caret_start,
-                                caret_start + caret_count,
-                                error_kind_name.to_string(),
-                            ));
-                        }
-                        i += 1;
-                    } else {
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Build source without annotation lines
-        let source = source_lines.join("\n");
-
-        // Parse and collect errors
+        let source = source_without_annotations(annotated_source);
         let events = parse(&source);
-        fn error_kind_name(kind: &ParseErrorKind) -> &'static str {
-            match kind {
-                ParseErrorKind::UnexpectedToken => "UnexpectedToken",
-                ParseErrorKind::UnclosedObject => "UnclosedObject",
-                ParseErrorKind::UnclosedSequence => "UnclosedSequence",
-                ParseErrorKind::MixedSeparators => "MixedSeparators",
-                ParseErrorKind::InvalidEscape(_) => "InvalidEscape",
-                ParseErrorKind::ExpectedKey => "ExpectedKey",
-                ParseErrorKind::ExpectedValue => "ExpectedValue",
-                ParseErrorKind::UnexpectedEof => "UnexpectedEof",
-                ParseErrorKind::DuplicateKey { .. } => "DuplicateKey",
-                ParseErrorKind::InvalidTagName => "InvalidTagName",
-                ParseErrorKind::InvalidKey => "InvalidKey",
-                ParseErrorKind::DanglingDocComment => "DanglingDocComment",
-                ParseErrorKind::TooManyAtoms => "TooManyAtoms",
-                ParseErrorKind::ReopenedPath { .. } => "ReopenedPath",
-                ParseErrorKind::NestIntoTerminal { .. } => "NestIntoTerminal",
-                ParseErrorKind::CommaInSequence => "CommaInSequence",
-                ParseErrorKind::MissingWhitespaceBeforeBlock => "MissingWhitespaceBeforeBlock",
-            }
-        }
 
         let actual_errors: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
-                Event::Error { span, kind } => Some((*span, error_kind_name(kind).to_string())),
+                Event::Error { span, kind } => Some(ActualError {
+                    span: (*span).into(),
+                    kind: error_kind_name(kind).to_string(),
+                }),
                 _ => None,
             })
             .collect();
 
-        // Convert actual error spans to line/column for comparison
-        fn span_to_line_col(source: &str, span: Span) -> Option<(usize, usize, usize)> {
-            let mut line_start = 0;
-            for (line_idx, line) in source.lines().enumerate() {
-                let line_end = line_start + line.len();
-                let span_start = span.start as usize;
-                let span_end = span.end as usize;
+        assert_annotated_errors(annotated_source, actual_errors);
+    }
 
-                if span_start >= line_start && span_start <= line_end {
-                    let col_start = span_start - line_start;
-                    let col_end = (span_end - line_start).min(line.len());
-                    return Some((line_idx, col_start, col_end));
-                }
-                line_start = line_end + 1; // +1 for newline
-            }
-            None
-        }
-
-        // Check each expected error
-        let mut unmatched_expected = Vec::new();
-        let mut matched_actual = vec![false; actual_errors.len()];
-
-        for (exp_line, exp_start, exp_end, exp_kind) in &expected_errors {
-            let mut found = false;
-
-            for (i, (span, actual_kind)) in actual_errors.iter().enumerate() {
-                if matched_actual[i] {
-                    continue;
-                }
-
-                if let Some((act_line, act_start, act_end)) = span_to_line_col(&source, *span) {
-                    let actual_kind_name = actual_kind;
-
-                    // Check if this actual error matches the expected one
-                    if act_line == *exp_line
-                        && act_start == *exp_start
-                        && act_end == *exp_end
-                        && actual_kind_name == exp_kind
-                    {
-                        matched_actual[i] = true;
-                        found = true;
-                        break;
-                    }
-                }
-            }
-
-            if !found {
-                unmatched_expected.push((*exp_line, *exp_start, *exp_end, exp_kind.clone()));
-            }
-        }
-
-        // Collect unmatched actual errors
-        let unmatched_actual: Vec<_> = actual_errors
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !matched_actual[*i])
-            .map(|(_, (span, kind))| {
-                let (line, start, end) = span_to_line_col(&source, *span).unwrap_or((0, 0, 0));
-                (line, start, end, kind.clone())
-            })
-            .collect();
-
-        // Build error message if mismatches found
-        if !unmatched_expected.is_empty() || !unmatched_actual.is_empty() {
-            fn line_col_to_offset(source: &str, line: usize, col: usize) -> Option<usize> {
-                let mut line_start = 0;
-                for (idx, text) in source.lines().enumerate() {
-                    if idx == line {
-                        return Some(line_start + col.min(text.len()));
-                    }
-                    line_start += text.len() + 1;
-                }
-                None
-            }
-
-            fn build_report(
-                title: &str,
-                filename: &'static str,
-                labels: Vec<(std::ops::Range<usize>, String, Color)>,
-                source: &str,
-            ) -> Option<String> {
-                let (first_range, _, _) = labels.first()?;
-                let mut report = Report::build(ReportKind::Error, (filename, first_range.clone()))
-                    .with_message(title)
-                    .with_config(
-                        Config::default()
-                            .with_color(true)
-                            .with_char_set(CharSet::Unicode),
-                    );
-
-                for (range, message, color) in labels {
-                    report = report.with_label(
-                        Label::new((filename, range))
-                            .with_message(message)
-                            .with_color(color),
-                    );
-                }
-
-                let mut output = Vec::new();
-                report
-                    .finish()
-                    .write((filename, Source::from(source)), &mut output)
-                    .ok()?;
-                String::from_utf8(output).ok()
-            }
-
-            let mut msg = String::new();
-            msg.push('\n');
-
-            let filename = "test.styx";
-
-            let expected_labels: Vec<_> = expected_errors
-                .iter()
-                .filter_map(|(line, start, end, kind)| {
-                    let end = (*end).max(*start + 1);
-                    let start_offset = line_col_to_offset(&source, *line, *start)?;
-                    let end_offset = line_col_to_offset(&source, *line, end)?;
-                    let is_unmatched = unmatched_expected
-                        .iter()
-                        .any(|(l, s, e, k)| l == line && s == start && *e == end && k == kind);
-                    let color = if is_unmatched {
-                        Color::Red
-                    } else {
-                        Color::Yellow
-                    };
-                    Some((start_offset..end_offset, kind.clone(), color))
-                })
-                .collect();
-
-            let actual_labels: Vec<_> = actual_errors
-                .iter()
-                .filter_map(|(span, kind)| {
-                    let (line, start, end) = span_to_line_col(&source, *span)?;
-                    let end = end.max(start + 1);
-                    let start_offset = line_col_to_offset(&source, line, start)?;
-                    let end_offset = line_col_to_offset(&source, line, end)?;
-                    let is_unmatched = unmatched_actual
-                        .iter()
-                        .any(|(l, s, e, k)| *l == line && *s == start && *e == end && k == kind);
-                    let color = if is_unmatched {
-                        Color::Green
-                    } else {
-                        Color::Cyan
-                    };
-                    Some((start_offset..end_offset, kind.clone(), color))
-                })
-                .collect();
-
-            if let Some(report) = build_report(
-                "EXPECTED ERRORS (from test annotations)",
-                filename,
-                expected_labels,
-                &source,
-            ) {
-                msg.push_str(&report);
-            }
-
-            if let Some(report) = build_report(
-                "ACTUAL ERRORS (from parser)",
-                filename,
-                actual_labels,
-                &source,
-            ) {
-                msg.push('\n');
-                msg.push_str(&report);
-            }
-
-            panic!("{}", msg);
+    fn error_kind_name(kind: &ParseErrorKind) -> &'static str {
+        match kind {
+            ParseErrorKind::UnexpectedToken => "UnexpectedToken",
+            ParseErrorKind::UnclosedObject => "UnclosedObject",
+            ParseErrorKind::UnclosedSequence => "UnclosedSequence",
+            ParseErrorKind::MixedSeparators => "MixedSeparators",
+            ParseErrorKind::InvalidEscape(_) => "InvalidEscape",
+            ParseErrorKind::ExpectedKey => "ExpectedKey",
+            ParseErrorKind::ExpectedValue => "ExpectedValue",
+            ParseErrorKind::UnexpectedEof => "UnexpectedEof",
+            ParseErrorKind::DuplicateKey { .. } => "DuplicateKey",
+            ParseErrorKind::InvalidTagName => "InvalidTagName",
+            ParseErrorKind::InvalidKey => "InvalidKey",
+            ParseErrorKind::DanglingDocComment => "DanglingDocComment",
+            ParseErrorKind::TooManyAtoms => "TooManyAtoms",
+            ParseErrorKind::ReopenedPath { .. } => "ReopenedPath",
+            ParseErrorKind::NestIntoTerminal { .. } => "NestIntoTerminal",
+            ParseErrorKind::CommaInSequence => "CommaInSequence",
+            ParseErrorKind::MissingWhitespaceBeforeBlock => "MissingWhitespaceBeforeBlock",
         }
     }
 
@@ -3103,7 +2875,7 @@ mod tests {
         assert_parse_errors(
             r#"
 {@foo 1, @foo 2}
-         ^^^^ DuplicateKe
+         ^^^^ DuplicateKey
 "#,
         );
     }

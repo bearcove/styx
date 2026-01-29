@@ -703,6 +703,7 @@ dependencies = [
  "strip-ansi-escapes",
  "styx-format",
  "styx-parse",
+ "styx-testhelpers",
  "styx-tree",
  "tracing",
 ]
@@ -2060,6 +2061,7 @@ version = "1.0.1"
 dependencies = [
  "rowan",
  "styx-parse",
+ "styx-testhelpers",
 ]
 
 [[package]]
@@ -2161,10 +2163,17 @@ dependencies = [
 name = "styx-parse"
 version = "1.0.1"
 dependencies = [
- "ariadne",
  "facet",
  "facet-testhelpers",
+ "styx-testhelpers",
  "tracing",
+]
+
+[[package]]
+name = "styx-testhelpers"
+version = "1.0.0"
+dependencies = [
+ "ariadne",
 ]
 
 [[package]]

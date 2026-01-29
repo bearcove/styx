@@ -1,12 +1,7 @@
 [workspace]
 resolver = "3"
-members = [
-    "crates/*",
-]
-exclude = [
-    "editors/zed-styx",
-    "tools/styx-webmd",
-]
+members = ["crates/*"]
+exclude = ["editors/zed-styx", "tools/styx-webmd"]
 
 [workspace.package]
 edition = "2024"
@@ -47,6 +42,7 @@ styx-lsp = { path = "crates/styx-lsp", version = "1.0" }
 styx-embed = { path = "crates/styx-embed", version = "1.0" }
 styx-gen-go = { path = "crates/styx-gen-go", version = "1.0" }
 facet-styx = { path = "crates/facet-styx", version = "1.0" }
+styx-testhelpers = { path = "crates/styx-testhelpers", version = "1.0" }
 
 # Optimize WASM builds for size
 [profile.release.package.styx-wasm]
