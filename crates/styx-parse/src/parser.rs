@@ -3076,11 +3076,7 @@ mod tests {
     // parser[verify entry.key-equality]
     #[test]
     fn test_different_keys_ok() {
-        let events = parse("{a 1, b 2, c 3}");
-        assert!(
-            !events.iter().any(|e| matches!(e, Event::Error { .. })),
-            "Should not have any errors for different keys"
-        );
+        assert_parse_errors(r#"{a 1, b 2, c 3}"#);
     }
 
     // parser[verify entry.key-equality]
@@ -3479,10 +3475,7 @@ mod tests {
             "Should have scalar value 'value'"
         );
         // No errors
-        assert!(
-            !events.iter().any(|e| matches!(e, Event::Error { .. })),
-            "Simple dotted path should not have errors"
-        );
+        assert_parse_errors(r#"a.b value"#);
     }
 
     // parser[verify entry.path]
@@ -3660,9 +3653,10 @@ mod tests {
         // Sibling paths under common prefix should be allowed
         let events = parse("foo.bar.x value1\nfoo.bar.y value2\nfoo.baz value3");
         // Should have no errors
-        assert!(
-            !events.iter().any(|e| matches!(e, Event::Error { .. })),
-            "Sibling dotted paths should not cause errors"
+        assert_parse_errors(
+            r#"foo.bar.x value1
+foo.bar.y value2
+foo.baz value3"#,
         );
         // Should have all keys
         let keys: Vec<_> = events
