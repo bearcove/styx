@@ -1185,14 +1185,13 @@ impl<'src> Parser2<'src> {
             TokenKind::Gt if t.span.start == value_span.end => {
                 // The bare scalar we emitted was actually an attribute key!
                 // We already emitted Scalar - that's now being reinterpreted.
-                // Emit ObjectStart, then the inner entry structure.
+                // Emit ObjectStart and let step_after_gt handle the entry structure.
                 self.push_attr_object_context();
-                self.event_queue.push_back(Event::EntryStart);
-                let key_text = Cow::Borrowed(self.span_text(value_span));
-                self.queue_key(value_span, None, Some(key_text), ScalarKind::Bare);
+                // Set in_chain=false since this is the first attribute in this chain
+                // step_after_gt will emit EntryStart and Key
                 self.state = State::AfterGt {
                     key_span: value_span,
-                    in_chain: true,
+                    in_chain: false,
                 };
                 Some(Event::ObjectStart {
                     span: value_span,
