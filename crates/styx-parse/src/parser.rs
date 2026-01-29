@@ -2250,10 +2250,32 @@ mod tests {
 
         // Parse and collect errors
         let events = parse(&source);
+        fn error_kind_name(kind: &ParseErrorKind) -> &'static str {
+            match kind {
+                ParseErrorKind::UnexpectedToken => "UnexpectedToken",
+                ParseErrorKind::UnclosedObject => "UnclosedObject",
+                ParseErrorKind::UnclosedSequence => "UnclosedSequence",
+                ParseErrorKind::MixedSeparators => "MixedSeparators",
+                ParseErrorKind::InvalidEscape(_) => "InvalidEscape",
+                ParseErrorKind::ExpectedKey => "ExpectedKey",
+                ParseErrorKind::ExpectedValue => "ExpectedValue",
+                ParseErrorKind::UnexpectedEof => "UnexpectedEof",
+                ParseErrorKind::DuplicateKey { .. } => "DuplicateKey",
+                ParseErrorKind::InvalidTagName => "InvalidTagName",
+                ParseErrorKind::InvalidKey => "InvalidKey",
+                ParseErrorKind::DanglingDocComment => "DanglingDocComment",
+                ParseErrorKind::TooManyAtoms => "TooManyAtoms",
+                ParseErrorKind::ReopenedPath { .. } => "ReopenedPath",
+                ParseErrorKind::NestIntoTerminal { .. } => "NestIntoTerminal",
+                ParseErrorKind::CommaInSequence => "CommaInSequence",
+                ParseErrorKind::MissingWhitespaceBeforeBlock => "MissingWhitespaceBeforeBlock",
+            }
+        }
+
         let actual_errors: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
-                Event::Error { span, kind } => Some((*span, format!("{:?}", kind))),
+                Event::Error { span, kind } => Some((*span, error_kind_name(kind).to_string())),
                 _ => None,
             })
             .collect();
@@ -2281,7 +2303,6 @@ mod tests {
         let mut matched_actual = vec![false; actual_errors.len()];
 
         for (exp_line, exp_start, exp_end, exp_kind) in &expected_errors {
-            let exp_kind_lower = exp_kind.to_lowercase();
             let mut found = false;
 
             for (i, (span, actual_kind)) in actual_errors.iter().enumerate() {
@@ -2290,13 +2311,13 @@ mod tests {
                 }
 
                 if let Some((act_line, act_start, act_end)) = span_to_line_col(&source, *span) {
-                    let actual_kind_lower = actual_kind.to_lowercase();
+                    let actual_kind_name = actual_kind;
 
                     // Check if this actual error matches the expected one
                     if act_line == *exp_line
-                        && act_start <= *exp_end
-                        && act_end >= *exp_start
-                        && actual_kind_lower.contains(&exp_kind_lower)
+                        && act_start == *exp_start
+                        && act_end == *exp_end
+                        && actual_kind_name == exp_kind
                     {
                         matched_actual[i] = true;
                         found = true;
@@ -2323,35 +2344,33 @@ mod tests {
 
         // Build error message if mismatches found
         if !unmatched_expected.is_empty() || !unmatched_actual.is_empty() {
+            const DIM: &str = "\x1b[2m";
+            const RED: &str = "\x1b[31m";
+            const GREEN: &str = "\x1b[32m";
+            const RESET: &str = "\x1b[0m";
+
             let mut msg = String::new();
+            msg.push('\n');
             msg.push_str("╔══════════════════════════════════════════════════════════════════════════════╗\n");
             msg.push_str("║                     PARSE ERROR ASSERTION FAILED                             ║\n");
             msg.push_str("╚══════════════════════════════════════════════════════════════════════════════╝\n\n");
 
-            // Show the source
-            msg.push_str("┌──────────────────────────────────────────────────────────────────────────────┐\n");
-            msg.push_str("│ INPUT SOURCE                                                                 │\n");
-            msg.push_str("└──────────────────────────────────────────────────────────────────────────────┘\n");
-            for (i, line) in source.lines().enumerate() {
-                msg.push_str(&format!("  {} │ {}\n", i, line));
-            }
-
             // Show what we EXPECTED (source annotated with expected errors)
-            msg.push_str("\n");
             msg.push_str("┌──────────────────────────────────────────────────────────────────────────────┐\n");
             msg.push_str("│ EXPECTED ERRORS (from test annotations)                                      │\n");
             msg.push_str("└──────────────────────────────────────────────────────────────────────────────┘\n");
             let max_line_len = source.lines().map(|l| l.len()).max().unwrap_or(0);
             for (line_idx, line) in source.lines().enumerate() {
-                msg.push_str(&format!("  {} │ {}\n", line_idx, line));
+                let gutter = format!("  {:>3} │ ", line_idx + 1);
+                msg.push_str(&format!("{}{}{}{}\n", DIM, gutter, RESET, line));
                 // Find expected errors for this line
                 let line_errors: Vec<_> = expected_errors
                     .iter()
                     .filter(|(l, _, _, _)| *l == line_idx)
                     .collect();
                 if !line_errors.is_empty() {
-                    let mut caret_line = vec![' '; max_line_len + 4];
                     for (_, start, end, kind) in line_errors {
+                        let mut caret_line = vec![' '; max_line_len + 4];
                         for i in *start..*end {
                             if i < caret_line.len() {
                                 caret_line[i] = '^';
@@ -2366,11 +2385,21 @@ mod tests {
                                 caret_line.push(c);
                             }
                         }
+                        let is_unmatched = unmatched_expected.iter().any(|(l, s, e, k)| {
+                            *l == line_idx && *s == *start && *e == *end && k == kind
+                        });
+                        let color = if is_unmatched { RED } else { RESET };
+                        let caret_gutter = format!("  {:>3} │ ", "");
+                        msg.push_str(&format!(
+                            "{}{}{}{}{}{}\n",
+                            DIM,
+                            caret_gutter,
+                            RESET,
+                            color,
+                            caret_line.iter().collect::<String>().trim_end(),
+                            RESET
+                        ));
                     }
-                    msg.push_str(&format!(
-                        "    │ {}\n",
-                        caret_line.iter().collect::<String>().trim_end()
-                    ));
                 }
             }
 
@@ -2380,7 +2409,8 @@ mod tests {
             msg.push_str("│ ACTUAL ERRORS (from parser)                                                  │\n");
             msg.push_str("└──────────────────────────────────────────────────────────────────────────────┘\n");
             for (line_idx, line) in source.lines().enumerate() {
-                msg.push_str(&format!("  {} │ {}\n", line_idx, line));
+                let gutter = format!("  {:>3} │ ", line_idx + 1);
+                msg.push_str(&format!("{}{}{}{}\n", DIM, gutter, RESET, line));
                 // Find actual errors for this line
                 let line_errors: Vec<_> = actual_errors
                     .iter()
@@ -2390,8 +2420,8 @@ mod tests {
                     .filter(|(l, _, _, _)| *l == line_idx)
                     .collect();
                 if !line_errors.is_empty() {
-                    let mut caret_line = vec![' '; max_line_len + 4];
                     for (_, start, end, kind) in line_errors {
+                        let mut caret_line = vec![' '; max_line_len + 4];
                         for i in start..end.max(start + 1) {
                             if i < caret_line.len() {
                                 caret_line[i] = '^';
@@ -2406,11 +2436,21 @@ mod tests {
                                 caret_line.push(c);
                             }
                         }
+                        let is_unmatched = unmatched_actual.iter().any(|(l, s, e, k)| {
+                            *l == line_idx && *s == start && *e == end && k == &kind
+                        });
+                        let color = if is_unmatched { GREEN } else { RESET };
+                        let caret_gutter = format!("  {:>3} │ ", "");
+                        msg.push_str(&format!(
+                            "{}{}{}{}{}{}\n",
+                            DIM,
+                            caret_gutter,
+                            RESET,
+                            color,
+                            caret_line.iter().collect::<String>().trim_end(),
+                            RESET
+                        ));
                     }
-                    msg.push_str(&format!(
-                        "    │ {}\n",
-                        caret_line.iter().collect::<String>().trim_end()
-                    ));
                 }
             }
 
@@ -2421,21 +2461,34 @@ mod tests {
             msg.push_str("└──────────────────────────────────────────────────────────────────────────────┘\n");
 
             if !unmatched_expected.is_empty() {
-                msg.push_str("\n  ❌ Expected but NOT found:\n");
+                msg.push_str(&format!("\n{}  ❌ Expected but NOT found:{}\n", RED, RESET));
                 for (line, start, end, kind) in &unmatched_expected {
                     msg.push_str(&format!(
-                        "     • Line {}, columns {}-{}: {}\n",
-                        line, start, end, kind
+                        "     • Line {}, columns {}-{}: {}{}{}\n",
+                        line + 1,
+                        start + 1,
+                        (*end).max(*start + 1),
+                        RED,
+                        kind,
+                        RESET
                     ));
                 }
             }
 
             if !unmatched_actual.is_empty() {
-                msg.push_str("\n  ❌ Found but NOT expected:\n");
+                msg.push_str(&format!(
+                    "\n{}  ❌ Found but NOT expected:{}\n",
+                    GREEN, RESET
+                ));
                 for (line, start, end, kind) in &unmatched_actual {
                     msg.push_str(&format!(
-                        "     • Line {}, columns {}-{}: {}\n",
-                        line, start, end, kind
+                        "     • Line {}, columns {}-{}: {}{}{}\n",
+                        line + 1,
+                        start + 1,
+                        (*end).max(*start + 1),
+                        GREEN,
+                        kind,
+                        RESET
                     ));
                 }
             }
@@ -3043,7 +3096,7 @@ mod tests {
         assert_parse_errors(
             r#"
 {@foo 1, @foo 2}
-          ^ DuplicateKey
+         ^^^^ DuplicateKe
 "#,
         );
     }
