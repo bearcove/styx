@@ -478,20 +478,15 @@ impl<'src> Parser2<'src> {
                 self.expecting_value = true;
                 self.entry_atom_count = 1; // Key is the first atom
 
-                // Emit any buffered doc comments
+                // Emit any buffered doc comments first
                 let doc_comments = std::mem::take(&mut self.pending_doc);
                 for (span, text) in &doc_comments {
                     self.peeked_events
                         .push(Event::DocComment { span: *span, text });
                 }
 
-                // Queue EntryStart before the Key
-                let mut events = vec![Event::EntryStart];
-                events.extend(self.peeked_events.drain(..));
-                self.peeked_events = events;
-
-                trace!(?key, "parse_object_entry: Key");
-                return Some(Event::Key {
+                // Queue Key event after EntryStart (we return EntryStart, Key is queued)
+                self.peeked_events.push(Event::Key {
                     span: key_token.span,
                     tag: None,
                     payload: Some(key),
@@ -501,6 +496,9 @@ impl<'src> Parser2<'src> {
                         ScalarKind::Bare
                     },
                 });
+
+                trace!("parse_object_entry: EntryStart");
+                return Some(Event::EntryStart);
             }
             TokenKind::At => {
                 let at_token = self.next_token();
@@ -543,24 +541,23 @@ impl<'src> Parser2<'src> {
                     self.expecting_value = true;
                     self.entry_atom_count = 1;
 
-                    // Emit doc comments and EntryStart
+                    // Emit doc comments first
                     let doc_comments = std::mem::take(&mut self.pending_doc);
                     for (span, text) in &doc_comments {
                         self.peeked_events
                             .push(Event::DocComment { span: *span, text });
                     }
 
-                    let mut events = vec![Event::EntryStart];
-                    events.extend(self.peeked_events.drain(..));
-                    self.peeked_events = events;
-
-                    trace!(tag = tag_name, "parse_object_entry: tagged Key");
-                    return Some(Event::Key {
+                    // Queue Key after EntryStart
+                    self.peeked_events.push(Event::Key {
                         span: Span::new(at_token.span.start, name_end),
                         tag: Some(tag_name),
                         payload: None,
                         kind: ScalarKind::Bare,
                     });
+
+                    trace!(tag = tag_name, "parse_object_entry: tagged EntryStart");
+                    return Some(Event::EntryStart);
                 }
 
                 // @ alone = unit key
@@ -573,17 +570,16 @@ impl<'src> Parser2<'src> {
                         .push(Event::DocComment { span: *span, text });
                 }
 
-                let mut events = vec![Event::EntryStart];
-                events.extend(self.peeked_events.drain(..));
-                self.peeked_events = events;
-
-                trace!("parse_object_entry: unit Key");
-                return Some(Event::Key {
+                // Queue Key after EntryStart
+                self.peeked_events.push(Event::Key {
                     span: at_token.span,
                     tag: None,
                     payload: None,
                     kind: ScalarKind::Bare,
                 });
+
+                trace!("parse_object_entry: unit EntryStart");
+                return Some(Event::EntryStart);
             }
             _ => {}
         }
