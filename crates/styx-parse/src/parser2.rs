@@ -290,8 +290,28 @@ impl<'src> Parser2<'src> {
     fn next_token_skip_newlines(&mut self) -> Token<'src> {
         loop {
             let t = self.next_token();
-            if t.kind != TokenKind::Newline {
-                return t;
+            if t.kind == TokenKind::Newline {
+                // Track newline as separator for mixed separator detection
+                self.track_separator(Separator::Newline, t.span);
+                continue;
+            }
+            return t;
+        }
+    }
+
+    /// Track a separator and emit error if mixing separator types.
+    fn track_separator(&mut self, sep: Separator, span: Span) {
+        if let Some(current) = self.separators_in_scope.last_mut() {
+            match *current {
+                None => *current = Some(sep),
+                Some(existing) if existing != sep => {
+                    // Mixed separators!
+                    self.event_queue.push_back(Event::Error {
+                        span,
+                        kind: ParseErrorKind::MixedSeparators,
+                    });
+                }
+                _ => {} // Same separator, fine
             }
         }
     }
@@ -395,15 +415,17 @@ impl<'src> Parser2<'src> {
     fn push_object_context(&mut self, implicit: bool) {
         self.context_stack.push(Context::Object { implicit });
         self.push_key_scope();
+        self.separators_in_scope.push(None);
     }
 
     /// Push an attribute object context and associated key scope.
     fn push_attr_object_context(&mut self) {
         self.context_stack.push(Context::AttrObject);
         self.push_key_scope();
+        self.separators_in_scope.push(None);
     }
 
-    /// Pop context and if it was an object, also pop key scope.
+    /// Pop context and if it was an object, also pop key scope and separator scope.
     fn pop_context(&mut self) -> Option<Context> {
         let ctx = self.context_stack.pop();
         if matches!(
@@ -411,6 +433,7 @@ impl<'src> Parser2<'src> {
             Some(Context::Object { .. }) | Some(Context::AttrObject)
         ) {
             self.pop_key_scope();
+            self.separators_in_scope.pop();
         }
         ctx
     }
@@ -548,7 +571,10 @@ impl<'src> Parser2<'src> {
                 kind: ParseErrorKind::UnexpectedToken,
             }),
 
-            TokenKind::Comma => None,
+            TokenKind::Comma => {
+                self.track_separator(Separator::Comma, t.span);
+                None
+            }
 
             TokenKind::LineComment => Some(Event::Comment {
                 span: t.span,
@@ -1169,11 +1195,21 @@ impl<'src> Parser2<'src> {
             }
 
             // Normal boundary - end entry
-            TokenKind::Newline
-            | TokenKind::Eof
-            | TokenKind::RBrace
-            | TokenKind::RParen
-            | TokenKind::Comma => {
+            TokenKind::Newline => {
+                self.track_separator(Separator::Newline, t.span);
+                self.event_queue.push_back(Event::EntryEnd);
+                self.state = State::ExpectEntry;
+                self.handle_boundary_token(t)
+            }
+
+            TokenKind::Comma => {
+                self.track_separator(Separator::Comma, t.span);
+                self.event_queue.push_back(Event::EntryEnd);
+                self.state = State::ExpectEntry;
+                self.handle_boundary_token(t)
+            }
+
+            TokenKind::Eof | TokenKind::RBrace | TokenKind::RParen => {
                 self.event_queue.push_back(Event::EntryEnd);
                 self.state = State::ExpectEntry;
                 self.handle_boundary_token(t)
@@ -1206,11 +1242,21 @@ impl<'src> Parser2<'src> {
         let t = self.next_token();
 
         match t.kind {
-            TokenKind::Newline
-            | TokenKind::Eof
-            | TokenKind::RBrace
-            | TokenKind::RParen
-            | TokenKind::Comma => {
+            TokenKind::Newline => {
+                self.track_separator(Separator::Newline, t.span);
+                self.event_queue.push_back(Event::EntryEnd);
+                self.state = State::ExpectEntry;
+                self.handle_boundary_token(t)
+            }
+
+            TokenKind::Comma => {
+                self.track_separator(Separator::Comma, t.span);
+                self.event_queue.push_back(Event::EntryEnd);
+                self.state = State::ExpectEntry;
+                self.handle_boundary_token(t)
+            }
+
+            TokenKind::Eof | TokenKind::RBrace | TokenKind::RParen => {
                 self.event_queue.push_back(Event::EntryEnd);
                 self.state = State::ExpectEntry;
                 self.handle_boundary_token(t)
