@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use styx_parse::{Event, ParseErrorKind, Separator, Span};
+use styx_parse::{Event, ParseErrorKind, Span};
 
 use crate::value::{Entry, Object, Payload, Scalar, Sequence, Tag, Value};
 
@@ -57,7 +57,6 @@ pub struct TreeBuilder {
 enum BuilderFrame {
     Object {
         entries: Vec<Entry>,
-        separator: Separator,
         span: Span,
         pending_doc_comment: Option<String>,
     },
@@ -102,7 +101,6 @@ impl TreeBuilder {
             tag: None,
             payload: Some(Payload::Object(Object {
                 entries: self.root_entries,
-                separator: Separator::Newline,
                 span: None,
             })),
             span: None,
@@ -212,10 +210,9 @@ impl TreeBuilder {
                 // No-op for tree building
             }
 
-            Event::ObjectStart { span, separator } => {
+            Event::ObjectStart { span } => {
                 self.stack.push(BuilderFrame::Object {
                     entries: Vec::new(),
-                    separator,
                     span,
                     pending_doc_comment: None,
                 });
@@ -224,7 +221,6 @@ impl TreeBuilder {
             Event::ObjectEnd { span } => {
                 if let Some(BuilderFrame::Object {
                     entries,
-                    separator,
                     span: start_span,
                     ..
                 }) = self.stack.pop()
@@ -233,7 +229,6 @@ impl TreeBuilder {
                         tag: None,
                         payload: Some(Payload::Object(Object {
                             entries,
-                            separator,
                             span: Some(Span {
                                 start: start_span.start,
                                 end: span.end,

@@ -18,8 +18,6 @@ pub enum Event<'src> {
     ObjectStart {
         /// Span of the opening brace.
         span: Span,
-        /// Detected separator mode.
-        separator: Separator,
     },
     /// End of an object.
     ObjectEnd {
@@ -110,18 +108,6 @@ pub enum Event<'src> {
         /// Kind of error.
         kind: ParseErrorKind,
     },
-}
-
-/// Separator mode for object entries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "facet", derive(facet::Facet))]
-#[repr(u8)]
-pub enum Separator {
-    /// Entries separated by newlines.
-    #[default]
-    Newline,
-    /// Entries separated by commas.
-    Comma,
 }
 
 /// Kind of scalar.

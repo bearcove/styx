@@ -6,7 +6,7 @@
 
 use serde::Serialize;
 use serde_json::json;
-use styx_parse::{ScalarKind, Separator};
+use styx_parse::ScalarKind;
 use styx_tree::{Entry, Object, Payload, Scalar, Sequence, Tag, Value};
 use wasm_bindgen::prelude::*;
 

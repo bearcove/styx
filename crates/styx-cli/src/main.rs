@@ -1283,11 +1283,7 @@ fn print_sexp_value(value: &Value, indent: usize) {
             }
         }
         (None, Some(Payload::Object(obj))) => {
-            let sep = match obj.separator {
-                styx_parse::Separator::Newline => "newline",
-                styx_parse::Separator::Comma => "comma",
-            };
-            print!("{pad}(object {span} {sep}");
+            print!("{pad}(object {span}");
             if obj.entries.is_empty() {
                 print!(")");
             } else {
@@ -1342,11 +1338,7 @@ fn print_sexp_payload(payload: &Payload, indent: usize) {
                 .span
                 .map(|s| format!("[{}, {}]", s.start, s.end))
                 .unwrap_or_else(|| "[-1, -1]".to_string());
-            let sep = match obj.separator {
-                styx_parse::Separator::Newline => "newline",
-                styx_parse::Separator::Comma => "comma",
-            };
-            print!("{pad}(object {span} {sep}");
+            print!("{pad}(object {span}");
             if obj.entries.is_empty() {
                 print!(")");
             } else {

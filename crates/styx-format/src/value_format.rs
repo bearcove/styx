@@ -121,8 +121,20 @@ impl ValueFormatter {
     }
 
     fn format_object_inner(&mut self, obj: &Object, after_tag: bool) {
-        // Preserve the original separator style - if it was newline-separated, keep it multiline
-        let force_multiline = matches!(obj.separator, styx_parse::Separator::Newline);
+        // Use heuristics: multiline if more than 2 entries or any entry has nested structure
+        let force_multiline = obj.entries.len() > 2
+            || obj.entries.iter().any(|e| {
+                e.value
+                    .payload
+                    .as_ref()
+                    .map(|p| {
+                        matches!(
+                            p,
+                            styx_tree::Payload::Object(_) | styx_tree::Payload::Sequence(_)
+                        )
+                    })
+                    .unwrap_or(false)
+            });
         if after_tag {
             self.writer.begin_struct_after_tag(force_multiline);
         } else {

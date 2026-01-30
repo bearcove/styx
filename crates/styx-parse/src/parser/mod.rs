@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use styx_tokenizer::Span;
 
-use crate::events::{ParseErrorKind, ScalarKind, Separator};
+use crate::events::{ParseErrorKind, ScalarKind};
 use crate::{Event, Lexeme, Lexer};
 
 /// Wraps lexer with a single pending slot for stashing boundary lexemes.
@@ -69,10 +69,6 @@ enum ParserState {
         start_span: Span,
         seen_keys: HashMap<KeyValue, Span>,
         pending_doc_comment: Option<Span>,
-        /// First separator seen (for reporting).
-        separator_mode: Option<Separator>,
-        /// Whether we've emitted ObjectStart yet.
-        emitted_start: bool,
         /// Parent state to restore when we pop.
         parent: Box<ParserState>,
     },
@@ -243,17 +239,13 @@ impl<'src> Parser<'src> {
                 }
                 Lexeme::ObjectStart { span } => {
                     // Explicit root object - after it closes, document is done
-                    // Don't emit ObjectStart yet - we need to see a separator first
                     self.state = ParserState::InObject {
                         start_span: span,
                         seen_keys: HashMap::new(),
                         pending_doc_comment: None,
-                        separator_mode: None,
-                        emitted_start: false,
                         parent: Box::new(ParserState::AfterDocument),
                     };
-                    // Continue to advance_in_object which will emit ObjectStart
-                    return self.advance_in_object();
+                    return Some(Event::ObjectStart { span });
                 }
                 _ => {
                     if let ParserState::DocumentRoot {
@@ -285,21 +277,11 @@ impl<'src> Parser<'src> {
             let lexeme = self.source.next();
             match lexeme {
                 Lexeme::Eof => {
-                    // Emit ObjectStart if we haven't yet (empty object case)
                     if let ParserState::InObject {
-                        emitted_start,
-                        separator_mode,
                         pending_doc_comment,
                         ..
                     } = &mut self.state
                     {
-                        if !*emitted_start {
-                            self.event_queue.push_back(Event::ObjectStart {
-                                span: start,
-                                separator: separator_mode.unwrap_or(Separator::Comma),
-                            });
-                            *emitted_start = true;
-                        }
                         if let Some(span) = pending_doc_comment.take() {
                             self.event_queue.push_back(Event::Error {
                                 span,
@@ -316,21 +298,11 @@ impl<'src> Parser<'src> {
                     return self.event_queue.pop_front();
                 }
                 Lexeme::ObjectEnd { span } => {
-                    // Emit ObjectStart if we haven't yet (empty object case)
                     if let ParserState::InObject {
-                        emitted_start,
-                        separator_mode,
                         pending_doc_comment,
                         ..
                     } = &mut self.state
                     {
-                        if !*emitted_start {
-                            self.event_queue.push_back(Event::ObjectStart {
-                                span: start,
-                                separator: separator_mode.unwrap_or(Separator::Comma),
-                            });
-                            *emitted_start = true;
-                        }
                         if let Some(doc_span) = pending_doc_comment.take() {
                             self.event_queue.push_back(Event::Error {
                                 span: doc_span,
@@ -338,92 +310,37 @@ impl<'src> Parser<'src> {
                             });
                         }
                     }
-                    self.event_queue.push_back(Event::ObjectEnd { span });
                     self.pop_state();
-                    return self.event_queue.pop_front();
+                    return Some(Event::ObjectEnd { span });
                 }
-                Lexeme::Newline { .. } => {
-                    // Track first separator seen
-                    if let ParserState::InObject { separator_mode, .. } = &mut self.state {
-                        if separator_mode.is_none() {
-                            *separator_mode = Some(Separator::Newline);
-                        }
-                    }
-                    continue;
-                }
-                Lexeme::Comma { .. } => {
-                    // Track first separator seen
-                    if let ParserState::InObject { separator_mode, .. } = &mut self.state {
-                        if separator_mode.is_none() {
-                            *separator_mode = Some(Separator::Comma);
-                        }
-                    }
-                    continue;
-                }
+                Lexeme::Newline { .. } | Lexeme::Comma { .. } => continue,
                 Lexeme::Comment { span, text } => {
-                    // Emit ObjectStart before returning comment if needed
-                    if let ParserState::InObject {
-                        emitted_start,
-                        separator_mode,
-                        ..
-                    } = &mut self.state
-                    {
-                        if !*emitted_start {
-                            self.event_queue.push_back(Event::ObjectStart {
-                                span: start,
-                                separator: separator_mode.unwrap_or(Separator::Comma),
-                            });
-                            *emitted_start = true;
-                        }
-                    }
-                    self.event_queue.push_back(Event::Comment { span, text });
-                    return self.event_queue.pop_front();
+                    return Some(Event::Comment { span, text });
                 }
                 Lexeme::DocComment { span, text } => {
                     if let ParserState::InObject {
                         pending_doc_comment,
-                        emitted_start,
-                        separator_mode,
                         ..
                     } = &mut self.state
                     {
                         *pending_doc_comment = Some(span);
-                        // Emit ObjectStart before returning doc comment if needed
-                        if !*emitted_start {
-                            self.event_queue.push_back(Event::ObjectStart {
-                                span: start,
-                                separator: separator_mode.unwrap_or(Separator::Comma),
-                            });
-                            *emitted_start = true;
-                        }
                     }
                     // Strip `/// ` or `///` prefix
                     let line = text
                         .strip_prefix("/// ")
                         .or_else(|| text.strip_prefix("///"))
                         .unwrap_or(text);
-                    self.event_queue.push_back(Event::DocComment {
+                    return Some(Event::DocComment {
                         span,
                         lines: vec![line],
                     });
-                    return self.event_queue.pop_front();
                 }
                 _ => {
-                    // Emit ObjectStart before first entry if needed
                     if let ParserState::InObject {
                         pending_doc_comment,
-                        emitted_start,
-                        separator_mode,
                         ..
                     } = &mut self.state
                     {
-                        if !*emitted_start {
-                            self.event_queue.push_back(Event::ObjectStart {
-                                span: start,
-                                separator: separator_mode.unwrap_or(Separator::Comma),
-                            });
-                            *emitted_start = true;
-                        }
                         *pending_doc_comment = None;
                     }
                     let atoms = self.collect_entry_atoms(lexeme);
@@ -804,7 +721,6 @@ impl<'src> Parser<'src> {
         let mut pending_doc_comments: Vec<(Span, &'src str)> = Vec::new();
         let mut unclosed = false;
         let mut end_span = start_span;
-        let mut separator_mode: Option<Separator> = None;
 
         loop {
             let lexeme = self.source.next();
@@ -823,20 +739,7 @@ impl<'src> Parser<'src> {
                     end_span = span;
                     break;
                 }
-                Lexeme::Newline { .. } => {
-                    // Only record the first separator seen
-                    if separator_mode.is_none() {
-                        separator_mode = Some(Separator::Newline);
-                    }
-                    continue;
-                }
-                Lexeme::Comma { .. } => {
-                    // Only record the first separator seen
-                    if separator_mode.is_none() {
-                        separator_mode = Some(Separator::Comma);
-                    }
-                    continue;
-                }
+                Lexeme::Newline { .. } | Lexeme::Comma { .. } => continue,
                 Lexeme::Comment { .. } => continue,
                 Lexeme::DocComment { span, text } => {
                     pending_doc_comments.push((span, text));
@@ -902,8 +805,6 @@ impl<'src> Parser<'src> {
             span: Span::new(start_span.start, end_span.end),
             content: AtomContent::Object {
                 entries,
-                // No separators seen = inline format (like comma-separated)
-                separator: separator_mode.unwrap_or(Separator::Comma),
                 duplicate_key_spans,
                 dangling_doc_comment_spans,
                 unclosed,
@@ -1061,10 +962,8 @@ impl<'src> Parser<'src> {
             });
 
             if i < depth - 1 {
-                self.event_queue.push_back(Event::ObjectStart {
-                    span: segment_span,
-                    separator: Separator::Newline,
-                });
+                self.event_queue
+                    .push_back(Event::ObjectStart { span: segment_span });
             }
 
             current_offset += segment_len + 1;
@@ -1262,15 +1161,12 @@ impl<'src> Parser<'src> {
             }
             AtomContent::Object {
                 entries,
-                separator,
                 duplicate_key_spans,
                 dangling_doc_comment_spans,
                 unclosed,
             } => {
-                self.event_queue.push_back(Event::ObjectStart {
-                    span: atom.span,
-                    separator: *separator,
-                });
+                self.event_queue
+                    .push_back(Event::ObjectStart { span: atom.span });
 
                 if *unclosed {
                     self.event_queue.push_back(Event::Error {
@@ -1347,10 +1243,8 @@ impl<'src> Parser<'src> {
                     .push_back(Event::SequenceEnd { span: atom.span });
             }
             AtomContent::Attributes(attrs) => {
-                self.event_queue.push_back(Event::ObjectStart {
-                    span: atom.span,
-                    separator: Separator::Comma,
-                });
+                self.event_queue
+                    .push_back(Event::ObjectStart { span: atom.span });
 
                 for attr in attrs {
                     self.event_queue.push_back(Event::EntryStart);
@@ -1442,7 +1336,6 @@ enum AtomContent<'src> {
     },
     Object {
         entries: Vec<ObjectEntry<'src>>,
-        separator: Separator,
         duplicate_key_spans: Vec<(Span, Span)>,
         dangling_doc_comment_spans: Vec<Span>,
         unclosed: bool,
