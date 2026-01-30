@@ -55,6 +55,12 @@ enum State {
     /// Emit Unit value (for key without value), then EntryEnd.
     EmitUnitValue { span: Span },
 
+    /// Emit Unit, then Error (for `>` with spaces).
+    EmitUnitThenError { unit_span: Span, error_span: Span },
+
+    /// Emit Error, then EntryEnd.
+    EmitErrorThenEntryEnd { error_span: Span },
+
     /// Emit EntryEnd, then go back to ExpectEntry.
     EmitEntryEnd,
 
@@ -110,6 +116,56 @@ enum State {
     /// After attr EntryEnd, check for more `>` or close.
     AfterAttrEntryEnd,
 
+    /// Emitting dotted path segments (e.g., "a.b.c" -> nested objects).
+    /// `offset` is byte position within the token, `depth` is how many objects we've pushed.
+    EmitDottedPath {
+        full_span: Span,
+        offset: u32,
+        depth: u32,
+    },
+
+    /// Emit Key for dotted path segment, then read value (last segment).
+    EmitDottedPathKey {
+        key_span: Span,
+        full_span: Span,
+        depth: u32,
+    },
+
+    /// Emit Key for dotted path segment, then ObjectStart (not last segment).
+    EmitDottedPathKeyThenObject {
+        key_span: Span,
+        full_span: Span,
+        next_offset: u32,
+        depth: u32,
+    },
+
+    /// Emit ObjectStart for dotted path nesting.
+    EmitDottedPathObject {
+        key_span: Span,
+        full_span: Span,
+        next_offset: u32,
+        depth: u32,
+    },
+
+    /// After all dotted path segments emitted, read value for innermost key.
+    AfterDottedPathKey { full_span: Span, depth: u32 },
+
+    /// After reading bare value in dotted path, check for `>`.
+    AfterDottedPathBareValue { value_span: Span, depth: u32 },
+
+    /// Emit scalar value for dotted path.
+    EmitDottedPathScalarValue {
+        span: Span,
+        kind: ScalarKind,
+        depth: u32,
+    },
+
+    /// Close the dotted path objects after value.
+    CloseDottedPath { depth: u32 },
+
+    /// Emit EntryEnd then continue closing dotted path.
+    EmitEntryEndThenCloseDotted { depth: u32 },
+
     /// Inside sequence that is an attribute value. After close, check for more attrs.
     ExpectSeqElemInAttr,
 
@@ -121,6 +177,18 @@ enum State {
 
     /// Emit ObjectEnd for attr value, then check for more attrs.
     EmitObjEndInAttr { rbrace_span: Span },
+
+    /// Emit TagStart for tag inside attr value.
+    EmitTagStartInAttr { tag_span: Span },
+
+    /// After TagStart in attr, check for payload.
+    AfterTagStartInAttr { tag_span: Span },
+
+    /// Emit TagEnd for tag in attr, then check for more attrs.
+    EmitTagEndInAttr,
+
+    /// Emit Unit for @tag@, then TagEnd in attr.
+    EmitUnitThenTagEndInAttr { unit_span: Span },
 
     /// Close the attribute object.
     EmitAttrObjectEnd,
@@ -348,6 +416,16 @@ impl<'src> Parser3<'src> {
                         }
 
                         TokenKind::BareScalar => {
+                            // Check for dotted path (e.g., "a.b.c")
+                            let text = self.text_at(t.span);
+                            if text.contains('.') {
+                                self.state = State::EmitDottedPath {
+                                    full_span: t.span,
+                                    offset: 0, // offset within the token
+                                    depth: 0,
+                                };
+                                continue;
+                            }
                             self.state = State::EmitEntryStart {
                                 key_span: t.span,
                                 key_kind: ScalarKind::Bare,
@@ -480,6 +558,22 @@ impl<'src> Parser3<'src> {
                             });
                         }
 
+                        TokenKind::Gt => {
+                            // `>` with space before it - not an attribute, just error
+                            // But we need to emit Key first, then Unit, then error
+                            // Actually, let's treat this as "key with unit value, followed by error"
+                            self.state = State::EmitUnitThenError {
+                                unit_span: key_span,
+                                error_span: t.span,
+                            };
+                            return Some(Event::Key {
+                                span: key_span,
+                                tag: None,
+                                payload: Some(key_payload),
+                                kind: key_kind,
+                            });
+                        }
+
                         _ => {
                             self.state = State::EmitEntryEnd;
                             return Some(Event::Error {
@@ -557,6 +651,22 @@ impl<'src> Parser3<'src> {
                 State::EmitUnitValue { span } => {
                     self.state = State::EmitEntryEnd;
                     return Some(Event::Unit { span });
+                }
+
+                State::EmitUnitThenError {
+                    unit_span,
+                    error_span,
+                } => {
+                    self.state = State::EmitErrorThenEntryEnd { error_span };
+                    return Some(Event::Unit { span: unit_span });
+                }
+
+                State::EmitErrorThenEntryEnd { error_span } => {
+                    self.state = State::EmitEntryEnd;
+                    return Some(Event::Error {
+                        span: error_span,
+                        kind: ParseErrorKind::UnexpectedToken,
+                    });
                 }
 
                 State::EmitEntryEnd => {
@@ -819,6 +929,11 @@ impl<'src> Parser3<'src> {
                                 separator: Separator::Comma,
                             });
                         }
+                        TokenKind::At => {
+                            // Tag value for attribute
+                            self.state = State::EmitTagStartInAttr { tag_span: t.span };
+                            continue;
+                        }
                         _ => {
                             self.state = State::EmitAttrObjectEnd;
                             return Some(Event::Error {
@@ -919,6 +1034,215 @@ impl<'src> Parser3<'src> {
                             });
                         }
                     }
+                }
+
+                State::EmitDottedPath {
+                    full_span,
+                    offset,
+                    depth,
+                } => {
+                    let text = self.text_at(full_span);
+                    let remaining = &text[offset as usize..];
+
+                    // Find the next segment
+                    let (segment, next_offset) = if let Some(dot_pos) = remaining.find('.') {
+                        (&remaining[..dot_pos], offset + dot_pos as u32 + 1)
+                    } else {
+                        (remaining, full_span.end - full_span.start) // last segment
+                    };
+
+                    // Validate: empty segment is an error
+                    if segment.is_empty() {
+                        self.state = State::EmitEntryEnd;
+                        return Some(Event::Error {
+                            span: full_span,
+                            kind: ParseErrorKind::InvalidKey,
+                        });
+                    }
+
+                    let segment_start = full_span.start + offset;
+                    let segment_end = segment_start + segment.len() as u32;
+                    let segment_span = Span::new(segment_start, segment_end);
+
+                    let is_last = next_offset >= full_span.end - full_span.start;
+
+                    if is_last {
+                        // Last segment - emit EntryStart and Key, then read value
+                        self.state = State::EmitDottedPathKey {
+                            key_span: segment_span,
+                            full_span,
+                            depth,
+                        };
+                        return Some(Event::EntryStart);
+                    } else {
+                        // Not last - emit EntryStart, Key, ObjectStart, continue
+                        self.state = State::EmitDottedPathKeyThenObject {
+                            key_span: segment_span,
+                            full_span,
+                            next_offset,
+                            depth,
+                        };
+                        return Some(Event::EntryStart);
+                    }
+                }
+
+                State::EmitDottedPathKey {
+                    key_span,
+                    full_span,
+                    depth,
+                } => {
+                    let key_text = self.text_at(key_span);
+                    self.state = State::AfterDottedPathKey { full_span, depth };
+                    return Some(Event::Key {
+                        span: key_span,
+                        tag: None,
+                        payload: Some(Cow::Borrowed(key_text)),
+                        kind: ScalarKind::Bare,
+                    });
+                }
+
+                State::EmitDottedPathKeyThenObject {
+                    key_span,
+                    full_span,
+                    next_offset,
+                    depth,
+                } => {
+                    let key_text = self.text_at(key_span);
+                    self.state = State::EmitDottedPathObject {
+                        key_span,
+                        full_span,
+                        next_offset,
+                        depth,
+                    };
+                    return Some(Event::Key {
+                        span: key_span,
+                        tag: None,
+                        payload: Some(Cow::Borrowed(key_text)),
+                        kind: ScalarKind::Bare,
+                    });
+                }
+
+                State::EmitDottedPathObject {
+                    key_span,
+                    full_span,
+                    next_offset,
+                    depth,
+                } => {
+                    self.context_stack.push(Context::Object { implicit: false });
+                    self.state = State::EmitDottedPath {
+                        full_span,
+                        offset: next_offset,
+                        depth: depth + 1,
+                    };
+                    return Some(Event::ObjectStart {
+                        span: key_span,
+                        separator: Separator::Newline,
+                    });
+                }
+
+                State::AfterDottedPathKey { full_span, depth } => {
+                    // Read the value for the innermost key
+                    let t = self.next_token_skip_ws();
+
+                    match t.kind {
+                        TokenKind::BareScalar => {
+                            // Check for `>` (attribute)
+                            self.state = State::AfterDottedPathBareValue {
+                                value_span: t.span,
+                                depth,
+                            };
+                            continue;
+                        }
+                        TokenKind::QuotedScalar => {
+                            self.state = State::EmitDottedPathScalarValue {
+                                span: t.span,
+                                kind: ScalarKind::Quoted,
+                                depth,
+                            };
+                            continue;
+                        }
+                        TokenKind::Newline | TokenKind::Eof => {
+                            self.state = State::CloseDottedPath { depth };
+                            return Some(Event::Unit { span: full_span });
+                        }
+                        TokenKind::LBrace => {
+                            self.context_stack.push(Context::Object { implicit: false });
+                            self.state = State::ExpectEntry;
+                            return Some(Event::ObjectStart {
+                                span: t.span,
+                                separator: Separator::Comma,
+                            });
+                        }
+                        TokenKind::LParen => {
+                            self.context_stack.push(Context::Sequence);
+                            self.state = State::ExpectSeqElem;
+                            return Some(Event::SequenceStart { span: t.span });
+                        }
+                        TokenKind::At => {
+                            self.state = State::EmitTagStart { tag_span: t.span };
+                            continue;
+                        }
+                        _ => {
+                            self.state = State::CloseDottedPath { depth };
+                            return Some(Event::Error {
+                                span: t.span,
+                                kind: ParseErrorKind::UnexpectedToken,
+                            });
+                        }
+                    }
+                }
+
+                State::AfterDottedPathBareValue { value_span, depth } => {
+                    // Check for `>` immediately after
+                    let t = self.lexer.next_token();
+                    if t.kind == TokenKind::Gt && t.span.start == value_span.end {
+                        // Attribute chain
+                        self.context_stack.push(Context::AttrObject);
+                        self.state = State::EmitAttrEntryStart {
+                            attr_key_span: value_span,
+                        };
+                        return Some(Event::ObjectStart {
+                            span: value_span,
+                            separator: Separator::Comma,
+                        });
+                    } else {
+                        // Normal scalar value
+                        self.state = State::CloseDottedPath { depth };
+                        return Some(Event::Scalar {
+                            span: value_span,
+                            value: Cow::Borrowed(self.text_at(value_span)),
+                            kind: ScalarKind::Bare,
+                        });
+                    }
+                }
+
+                State::EmitDottedPathScalarValue { span, kind, depth } => {
+                    let text = self.text_at(span);
+                    let value = match kind {
+                        ScalarKind::Quoted => self.unescape_quoted(text),
+                        _ => Cow::Borrowed(text),
+                    };
+                    self.state = State::CloseDottedPath { depth };
+                    return Some(Event::Scalar { span, value, kind });
+                }
+
+                State::CloseDottedPath { depth } => {
+                    if depth == 0 {
+                        self.state = State::EmitEntryEnd;
+                        return Some(Event::EntryEnd);
+                    } else {
+                        // Close one nested object
+                        self.context_stack.pop();
+                        self.state = State::EmitEntryEndThenCloseDotted { depth: depth - 1 };
+                        return Some(Event::ObjectEnd {
+                            span: self.eof_span(),
+                        });
+                    }
+                }
+
+                State::EmitEntryEndThenCloseDotted { depth } => {
+                    self.state = State::CloseDottedPath { depth };
+                    return Some(Event::EntryEnd);
                 }
 
                 State::ExpectSeqElemInAttr => {
@@ -1037,6 +1361,109 @@ impl<'src> Parser3<'src> {
                     self.context_stack.pop();
                     self.state = State::AfterAttrEntryEnd;
                     return Some(Event::ObjectEnd { span: rbrace_span });
+                }
+
+                State::EmitTagStartInAttr { tag_span } => {
+                    // Read tag name (bare scalar immediately after @)
+                    let t = self.lexer.next_token();
+
+                    match t.kind {
+                        TokenKind::BareScalar if t.span.start == tag_span.end => {
+                            let full_text = self.text_at(t.span);
+                            let (tag_name, has_trailing_at) =
+                                if let Some(at_pos) = full_text.find('@') {
+                                    (&full_text[..at_pos], true)
+                                } else {
+                                    (full_text, false)
+                                };
+
+                            let name_end = t.span.start + tag_name.len() as u32;
+
+                            if has_trailing_at {
+                                // @tag@ - explicit unit payload
+                                self.state = State::EmitTagEndInAttr;
+                                // Emit TagStart, then Unit, then TagEnd
+                                // Actually need intermediate state for Unit
+                                self.state = State::EmitUnitThenTagEndInAttr {
+                                    unit_span: Span::new(name_end, name_end + 1),
+                                };
+                                return Some(Event::TagStart {
+                                    span: Span::new(tag_span.start, name_end),
+                                    name: tag_name,
+                                });
+                            }
+
+                            self.state = State::AfterTagStartInAttr {
+                                tag_span: Span::new(t.span.start, name_end),
+                            };
+                            return Some(Event::TagStart {
+                                span: Span::new(tag_span.start, name_end),
+                                name: tag_name,
+                            });
+                        }
+                        _ => {
+                            // @ not followed by identifier - just @ as unit value
+                            self.state = State::EmitAttrEntryEnd;
+                            return Some(Event::Unit { span: tag_span });
+                        }
+                    }
+                }
+
+                State::AfterTagStartInAttr { tag_span } => {
+                    // Check for payload
+                    let t = self.lexer.next_token();
+
+                    match t.kind {
+                        TokenKind::LBrace if t.span.start == tag_span.end => {
+                            self.context_stack.push(Context::Object { implicit: false });
+                            self.state = State::ExpectEntry;
+                            return Some(Event::ObjectStart {
+                                span: t.span,
+                                separator: Separator::Comma,
+                            });
+                        }
+
+                        TokenKind::LParen if t.span.start == tag_span.end => {
+                            self.context_stack.push(Context::Sequence);
+                            self.state = State::ExpectSeqElem;
+                            return Some(Event::SequenceStart { span: t.span });
+                        }
+
+                        TokenKind::BareScalar if t.span.start == tag_span.end => {
+                            self.state = State::EmitTagEndInAttr;
+                            return Some(Event::Scalar {
+                                span: t.span,
+                                value: Cow::Borrowed(self.text_at(t.span)),
+                                kind: ScalarKind::Bare,
+                            });
+                        }
+
+                        TokenKind::QuotedScalar if t.span.start == tag_span.end => {
+                            let text = self.text_at(t.span);
+                            self.state = State::EmitTagEndInAttr;
+                            return Some(Event::Scalar {
+                                span: t.span,
+                                value: self.unescape_quoted(text),
+                                kind: ScalarKind::Quoted,
+                            });
+                        }
+
+                        // No payload - implicit unit
+                        _ => {
+                            self.state = State::AfterAttrEntryEnd;
+                            return Some(Event::TagEnd);
+                        }
+                    }
+                }
+
+                State::EmitTagEndInAttr => {
+                    self.state = State::AfterAttrEntryEnd;
+                    return Some(Event::TagEnd);
+                }
+
+                State::EmitUnitThenTagEndInAttr { unit_span } => {
+                    self.state = State::EmitTagEndInAttr;
+                    return Some(Event::Unit { span: unit_span });
                 }
 
                 State::EmitAttrObjectEnd => {
