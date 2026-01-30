@@ -34,7 +34,7 @@
           (scalar [247, 248] bare "c")))
       (entry
         (scalar [250, 254] bare "opts")
-        (object [255, 260] comma
+        (object [255, 260] newline
           (entry
             (scalar [256, 257] bare "x")
             (scalar [258, 259] bare "1"))
@@ -373,7 +373,7 @@
     (object [67, 159] newline
       (entry
         (scalar [73, 79] bare "script")
-        (scalar [80, 141] heredoc "echo \"hello\"\necho \"world\"\n"))
+        (scalar [80, 141] heredoc "        echo \"hello\"\n        echo \"world\""))
       (entry
         (scalar [146, 151] bare "other")
         (scalar [152, 157] bare "value"))
@@ -383,7 +383,7 @@
 (document [-1, -1]
   (entry
     (scalar [80, 83] bare "key")
-    (scalar [84, 117] heredoc "line one\nline two\n"))
+    (scalar [84, 117] heredoc "  line one\n  line two"))
 )
 ; file: compliance/corpus/01-scalars/heredoc-empty.styx
 (document [-1, -1]
@@ -398,20 +398,20 @@
     (object [35, 87] newline
       (entry
         (scalar [41, 47] bare "script")
-        (scalar [48, 85] heredoc "echo \"hello\"\necho \"world\"\n"))
+        (scalar [48, 85] heredoc "echo \"hello\"\necho \"world\""))
     ))
 )
 ; file: compliance/corpus/01-scalars/heredoc-lang-hint.styx
 (document [-1, -1]
   (entry
     (scalar [0, 4] bare "code")
-    (scalar [5, 59] heredoc "fn main() {\n    println!(\"Hello!\");\n}\n"))
+    (scalar [5, 59] heredoc "fn main() {\n    println!(\"Hello!\");\n}"))
 )
 ; file: compliance/corpus/01-scalars/heredoc-simple.styx
 (document [-1, -1]
   (entry
     (scalar [0, 4] bare "text")
-    (scalar [5, 57] heredoc "Hello, world!\nThis is a multi-line string.\n"))
+    (scalar [5, 57] heredoc "Hello, world!\nThis is a multi-line string."))
 )
 ; file: compliance/corpus/01-scalars/quoted-escapes.styx
 (document [-1, -1]
@@ -429,7 +429,7 @@
     (scalar [72, 87] quoted "say \"hello\""))
   (entry
     (scalar [88, 97] bare "backslash")
-    (scalar [98, 114] quoted "path\\to\\file"))
+    (scalar [98, 114] quoted "path\to\\file"))
 )
 ; file: compliance/corpus/01-scalars/quoted-simple.styx
 (document [-1, -1]
@@ -480,7 +480,7 @@
 (document [-1, -1]
   (entry
     (scalar [0, 6] bare "server")
-    (object [7, 34] comma
+    (object [7, 34] newline
       (entry
         (scalar [8, 12] bare "host")
         (scalar [13, 22] bare "localhost"))
@@ -493,7 +493,7 @@
 (document [-1, -1]
   (entry
     (scalar [0, 3] bare "obj")
-    (object [4, 6] comma))
+    (object [4, 6] newline))
 )
 ; file: compliance/corpus/02-objects/nested.styx
 (document [-1, -1]
@@ -536,14 +536,14 @@
 (document [-1, -1]
   (entry
     (scalar [56, 62] bare "single")
-    (object [63, 68] comma
+    (object [63, 68] newline
       (entry
         (scalar [64, 65] bare "a")
         (scalar [66, 67] bare "1"))
     ))
   (entry
     (scalar [69, 77] bare "multiple")
-    (object [78, 93] comma
+    (object [78, 93] newline
       (entry
         (scalar [79, 80] bare "a")
         (scalar [81, 82] bare "1"))
@@ -563,7 +563,7 @@
       (entry
         (unit [13, 14])
         (tag [22, 36] "object"
-          (object [22, 36] comma
+          (object [22, 36] newline
             (entry
               (scalar [23, 27] bare "name")
               (tag [28, 35] "string"))
@@ -571,7 +571,7 @@
       (entry
         (scalar [41, 45] bare "User")
         (tag [53, 62] "object"
-          (object [53, 62] comma
+          (object [53, 62] newline
             (entry
               (scalar [54, 56] bare "id")
               (tag [57, 61] "int"))
@@ -659,12 +659,12 @@
   (entry
     (scalar [0, 6] bare "routes")
     (sequence [7, 29]
-      (object [8, 16] comma
+      (object [8, 16] newline
         (entry
           (scalar [9, 13] bare "path")
           (scalar [14, 15] bare "/"))
       )
-      (object [17, 28] comma
+      (object [17, 28] newline
         (entry
           (scalar [18, 22] bare "path")
           (scalar [23, 27] bare "/api"))
@@ -682,19 +682,19 @@
     (scalar [65, 72] bare "results")
     (sequence [73, 119]
       (tag [77, 86] "ok"
-        (object [77, 86] comma
+        (object [77, 86] newline
           (entry
             (scalar [78, 83] bare "value")
             (scalar [84, 85] bare "1"))
         ))
       (tag [90, 99] "ok"
-        (object [90, 99] comma
+        (object [90, 99] newline
           (entry
             (scalar [91, 96] bare "value")
             (scalar [97, 98] bare "2"))
         ))
       (tag [104, 118] "err"
-        (object [104, 118] comma
+        (object [104, 118] newline
           (entry
             (scalar [105, 108] bare "msg")
             (scalar [109, 117] quoted "failed"))
@@ -720,7 +720,7 @@
   (entry
     (tag [108, 113] "root")
     (tag [121, 135] "object"
-      (object [121, 135] comma
+      (object [121, 135] newline
         (entry
           (scalar [122, 126] bare "name")
           (tag [127, 134] "string"))
@@ -750,19 +750,19 @@
     (scalar [0, 6] bare "routes")
     (sequence [7, 62]
       (tag [14, 22] "route"
-        (object [14, 22] comma
+        (object [14, 22] newline
           (entry
             (scalar [15, 19] bare "path")
             (scalar [20, 21] bare "/"))
         ))
       (tag [29, 40] "route"
-        (object [29, 40] comma
+        (object [29, 40] newline
           (entry
             (scalar [30, 34] bare "path")
             (scalar [35, 39] bare "/api"))
         ))
       (tag [47, 61] "route"
-        (object [47, 61] comma
+        (object [47, 61] newline
           (entry
             (scalar [48, 52] bare "path")
             (scalar [53, 60] bare "/health"))
@@ -809,7 +809,7 @@
   (entry
     (scalar [0, 6] bare "result")
     (tag [10, 26] "ok"
-      (object [10, 26] comma
+      (object [10, 26] newline
         (entry
           (scalar [11, 15] bare "data")
           (tag [21, 25] "some"
@@ -830,7 +830,7 @@
   (entry
     (scalar [0, 5] bare "error")
     (tag [12, 38] "error"
-      (object [12, 38] comma
+      (object [12, 38] newline
         (entry
           (scalar [13, 17] bare "code")
           (scalar [18, 21] bare "500"))
@@ -841,7 +841,7 @@
   (entry
     (scalar [39, 43] bare "user")
     (tag [49, 69] "user"
-      (object [49, 69] comma
+      (object [49, 69] newline
         (entry
           (scalar [50, 54] bare "name")
           (scalar [55, 60] bare "alice"))
@@ -943,22 +943,22 @@
 (document [-1, -1]
   (entry
     (scalar [0, 1] bare "a")
-    (object [2, 31] comma
+    (object [2, 31] newline
       (entry
         (scalar [3, 4] bare "b")
-        (object [5, 30] comma
+        (object [5, 30] newline
           (entry
             (scalar [6, 7] bare "c")
-            (object [8, 29] comma
+            (object [8, 29] newline
               (entry
                 (scalar [9, 10] bare "d")
-                (object [11, 28] comma
+                (object [11, 28] newline
                   (entry
                     (scalar [12, 13] bare "e")
-                    (object [14, 27] comma
+                    (object [14, 27] newline
                       (entry
                         (scalar [15, 16] bare "f")
-                        (object [17, 26] comma
+                        (object [17, 26] newline
                           (entry
                             (scalar [18, 19] bare "g")
                             (scalar [20, 25] bare "value"))
@@ -1030,7 +1030,7 @@
 (document [-1, -1]
   (entry
     (scalar [0, 3] bare "obj")
-    (object [4, 14] comma
+    (object [4, 14] newline
       (entry
         (scalar [5, 6] bare "a")
         (scalar [7, 8] bare "1"))
@@ -1073,7 +1073,7 @@
     (scalar [6, 7] bare "d"))
   (entry
     (scalar [8, 9] bare "e")
-    (object [10, 15] comma
+    (object [10, 15] newline
       (entry
         (scalar [11, 12] bare "f")
         (scalar [13, 14] bare "g"))
@@ -1089,7 +1089,7 @@
 ; file: compliance/corpus/07-invalid/duplicate-keys.styx
 (error [45, 49] "parse error at 45-49: duplicate key")
 ; file: compliance/corpus/07-invalid/heredoc-as-key.styx
-(error [35, 49] "parse error at 35-49: invalid key")
+(error [35, 41] "parse error at 35-41: invalid key")
 ; file: compliance/corpus/07-invalid/heredoc-lowercase.styx
 (error [53, 55] "parse error at 53-55: unexpected token")
 ; file: compliance/corpus/07-invalid/heredoc-missing-delim.styx
@@ -1105,21 +1105,22 @@
 ; file: compliance/corpus/07-invalid/invalid-tag-hyphen.styx
 (error [43, 47] "parse error at 43-47: invalid tag name")
 ; file: compliance/corpus/07-invalid/invalid-tag-slash.styx
-(error [35, 46] "parse error at 35-46: invalid tag name")
+(error [34, 46] "parse error at 34-46: invalid tag name")
 ; file: compliance/corpus/07-invalid/mixed-separators.styx
-(error [13, 14] "parse error at 13-14: mixed separators (use either commas or newlines)")
-; file: compliance/corpus/07-invalid/nest-into-scalar.styx
-(error [66, 71] "parse error at 66-71: cannot nest into `a.b` which has a terminal value")
-; file: compliance/corpus/07-invalid/object-as-key.styx
 (document [-1, -1]
   (entry
-    (unit [-1, -1])
-    (object [34, 39] comma
+    (scalar [0, 3] bare "obj")
+    (object [4, 20] newline
       (entry
-        (scalar [35, 36] bare "a")
-        (scalar [37, 38] bare "1"))
+        (scalar [10, 11] bare "a")
+        (scalar [12, 13] bare "1"))
+      (entry
+        (scalar [15, 16] bare "b")
+        (scalar [17, 18] bare "2"))
     ))
 )
+; file: compliance/corpus/07-invalid/nest-into-scalar.styx
+(error [66, 71] "parse error at 66-71: cannot nest into `a.b` which has a terminal value")
 ; file: compliance/corpus/07-invalid/reopen-nested-path.styx
 (error [99, 104] "parse error at 99-104: cannot reopen path `a.b` after sibling appeared")
 ; file: compliance/corpus/07-invalid/reopen-path.styx
@@ -1131,14 +1132,16 @@
   (entry
     (scalar [137, 140] bare "key")
     (tag [145, 147] "tag"
-      (object [145, 147] comma)))
+      (object [145, 147] newline)))
 )
+; file: compliance/corpus/07-invalid/trailing-after-root.styx
+(error [65, 71] "parse error at 65-71: trailing content after explicit root object")
 ; file: compliance/corpus/07-invalid/trailing-gt.styx
 (error [47, 48] "parse error at 47-48: expected a value")
 ; file: compliance/corpus/07-invalid/unclosed-brace.styx
 (error [4, 5] "parse error at 4-5: unclosed object (missing `}`)")
 ; file: compliance/corpus/07-invalid/unclosed-heredoc.styx
-(error [5, 23] "parse error at 5-23: unexpected token")
+(error [11, 23] "parse error at 11-23: unexpected token")
 ; file: compliance/corpus/07-invalid/unclosed-paren.styx
 (error [4, 5] "parse error at 4-5: unclosed sequence (missing `)`)")
 ; file: compliance/corpus/07-invalid/unclosed-quote.styx
