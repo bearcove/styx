@@ -14,7 +14,7 @@ use facet_format::{
     ParseEvent, ParseEventKind, SavePoint, ScalarValue,
 };
 use facet_reflect::Span as ReflectSpan;
-use styx_parse::{Event, ParseErrorKind, Parser2, ScalarKind as StyxScalarKind, Span};
+use styx_parse::{Event, ParseErrorKind, ScalarKind as StyxScalarKind, Span, parser3::Parser3};
 
 /// Streaming Styx parser implementing FormatParser.
 ///
@@ -28,7 +28,7 @@ use styx_parse::{Event, ParseErrorKind, Parser2, ScalarKind as StyxScalarKind, S
 #[derive(Clone)]
 pub struct StyxParser<'de> {
     input: &'de str,
-    inner: Parser2<'de>,
+    inner: Parser3<'de>,
     /// Peeked events queue (if any).
     peeked_events: Vec<ParseEvent<'de>>,
     /// Current span for error reporting.
@@ -43,6 +43,10 @@ pub struct StyxParser<'de> {
     at_implicit_root: bool,
     /// Depth of nested structures (for tracking when we leave root).
     depth: usize,
+    /// Stack tracking whether each tag has seen a payload.
+    /// When TagStart is seen, push false. When any payload event is seen, set top to true.
+    /// When TagEnd is seen, if top is false, emit Scalar(Unit) for implicit unit.
+    tag_has_payload_stack: Vec<bool>,
 }
 
 impl<'de> StyxParser<'de> {
@@ -50,10 +54,11 @@ impl<'de> StyxParser<'de> {
     pub fn new(source: &'de str) -> Self {
         Self {
             input: source,
-            inner: Parser2::new(source),
+            inner: Parser3::new(source),
             peeked_events: Vec::new(),
             current_span: None,
             complete: false,
+            tag_has_payload_stack: Vec::new(),
             pending_doc: Vec::new(),
             saved_state: None,
             at_implicit_root: true,
@@ -68,10 +73,11 @@ impl<'de> StyxParser<'de> {
     pub fn new_expr(source: &'de str) -> Self {
         Self {
             input: source,
-            inner: Parser2::new_expr(source),
+            inner: Parser3::new_expr(source),
             peeked_events: Vec::new(),
             current_span: None,
             complete: false,
+            tag_has_payload_stack: Vec::new(),
             pending_doc: Vec::new(),
             saved_state: None,
             at_implicit_root: false, // Expression mode doesn't have implicit root
@@ -99,6 +105,13 @@ impl<'de> StyxParser<'de> {
     /// Create a parse event with the current span.
     fn event(&self, kind: ParseEventKind<'de>) -> ParseEvent<'de> {
         ParseEvent::new(kind, self.event_span())
+    }
+
+    /// Mark that the current tag (if any) has seen a payload.
+    fn mark_tag_has_payload(&mut self) {
+        if let Some(last) = self.tag_has_payload_stack.last_mut() {
+            *last = true;
+        }
     }
 
     /// Create a parse error from a styx-parse error.
@@ -147,14 +160,39 @@ impl<'de> StyxParser<'de> {
     /// Returns None if the event should be skipped (e.g., DocumentStart).
     fn convert_event(&mut self, event: Event<'de>) -> Result<Option<ParseEvent<'de>>, ParseError> {
         match event {
-            Event::DocumentStart | Event::DocumentEnd => {
-                // These don't map to facet-format events
-                Ok(None)
+            Event::DocumentStart => {
+                if self.at_implicit_root {
+                    // Parser3 no longer emits ObjectStart for implicit root,
+                    // so we synthesize StructStart here for the implicit root object.
+                    self.depth += 1;
+                    Ok(Some(
+                        self.event(ParseEventKind::StructStart(ContainerKind::Object)),
+                    ))
+                } else {
+                    // Expression mode - no implicit root, skip DocumentStart
+                    Ok(None)
+                }
+            }
+
+            Event::DocumentEnd => {
+                if self.at_implicit_root {
+                    // Parser3 no longer emits ObjectEnd for implicit root,
+                    // so we synthesize StructEnd here for the implicit root object.
+                    self.depth -= 1;
+                    if self.depth == 0 {
+                        self.at_implicit_root = false;
+                    }
+                    Ok(Some(self.event(ParseEventKind::StructEnd)))
+                } else {
+                    // Expression mode - no implicit root, skip DocumentEnd
+                    Ok(None)
+                }
             }
 
             Event::ObjectStart { span, .. } => {
                 self.current_span = Some(span);
                 self.depth += 1;
+                self.mark_tag_has_payload();
                 Ok(Some(
                     self.event(ParseEventKind::StructStart(ContainerKind::Object)),
                 ))
@@ -172,6 +210,7 @@ impl<'de> StyxParser<'de> {
             Event::SequenceStart { span } => {
                 self.current_span = Some(span);
                 self.depth += 1;
+                self.mark_tag_has_payload();
                 Ok(Some(self.event(ParseEventKind::SequenceStart(
                     ContainerKind::Array,
                 ))))
@@ -252,13 +291,29 @@ impl<'de> StyxParser<'de> {
                     };
                 let scalar = self.parse_scalar(value, kind);
                 trace!(?scalar, "convert_event: Scalar");
+                self.mark_tag_has_payload();
                 Ok(Some(self.event(ParseEventKind::Scalar(scalar))))
             }
 
             Event::Unit { span } => {
                 self.current_span = Some(span);
-                trace!("convert_event: Unit");
-                Ok(Some(self.event(ParseEventKind::Scalar(ScalarValue::Unit))))
+                self.mark_tag_has_payload();
+
+                // Check if this Unit represents an actual @ token in the source
+                // vs an implicit unit (key with no value).
+                let is_at_token = self.span_text(span) == "@";
+
+                if is_at_token && self.tag_has_payload_stack.is_empty() {
+                    // Standalone @ is a unit tag - emit VariantTag(None) + Scalar(Unit)
+                    trace!("convert_event: Unit (@) -> VariantTag(None) + Scalar(Unit)");
+                    self.peeked_events
+                        .push(self.event(ParseEventKind::Scalar(ScalarValue::Unit)));
+                    Ok(Some(self.event(ParseEventKind::VariantTag(None))))
+                } else {
+                    // Either inside a tag payload, or an implicit unit (no value)
+                    trace!("convert_event: Unit (implicit/payload) -> Scalar(Unit)");
+                    Ok(Some(self.event(ParseEventKind::Scalar(ScalarValue::Unit))))
+                }
             }
 
             Event::TagStart { span, name } => {
@@ -266,11 +321,21 @@ impl<'de> StyxParser<'de> {
                 // Empty name means unit tag (@), which maps to VariantTag(None)
                 let tag = if name.is_empty() { None } else { Some(name) };
                 trace!(?tag, "convert_event: TagStart -> VariantTag");
+                // Track that we're in a tag and haven't seen a payload yet
+                self.tag_has_payload_stack.push(false);
                 Ok(Some(self.event(ParseEventKind::VariantTag(tag))))
             }
 
             Event::TagEnd => {
-                // TagEnd doesn't map to a facet-format event
+                // Check if this tag had a payload
+                if let Some(had_payload) = self.tag_has_payload_stack.pop() {
+                    if !had_payload {
+                        // No payload was emitted - this is a unit tag, emit Scalar(Unit)
+                        trace!("convert_event: TagEnd (unit tag) -> Scalar(Unit)");
+                        return Ok(Some(self.event(ParseEventKind::Scalar(ScalarValue::Unit))));
+                    }
+                }
+                // Tag had a payload, TagEnd doesn't need to emit anything
                 Ok(None)
             }
 

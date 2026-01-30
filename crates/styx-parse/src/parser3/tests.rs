@@ -8,6 +8,10 @@ fn parse(source: &str) -> Vec<Event<'_>> {
     Parser3::new(source).parse_to_vec()
 }
 
+fn parse_expr(source: &str) -> Vec<Event<'_>> {
+    Parser3::new_expr(source).parse_to_vec()
+}
+
 fn error_kind_name(kind: &ParseErrorKind) -> &'static str {
     match kind {
         ParseErrorKind::UnexpectedToken => "UnexpectedToken",
@@ -500,8 +504,8 @@ fn test_object_in_sequence() {
         .iter()
         .filter(|e| matches!(e, Event::ObjectStart { .. }))
         .count();
-    // 3 = implicit root + 2 objects in sequence
-    assert_eq!(obj_starts, 3);
+    // 2 = 2 objects in sequence (implicit root doesn't emit ObjectStart)
+    assert_eq!(obj_starts, 2);
 }
 
 #[test]
@@ -847,8 +851,8 @@ fn test_dotted_path_three_segments() {
         .iter()
         .filter(|e| matches!(e, Event::ObjectStart { .. }))
         .collect();
-    // 3 = implicit root + 2 from dotted path (a { b { c deep } })
-    assert_eq!(obj_starts.len(), 3);
+    // 2 = 2 from dotted path (a { b { c deep } }) - implicit root doesn't emit ObjectStart
+    assert_eq!(obj_starts.len(), 2);
     assert_parse_errors(r#"a.b.c deep"#);
 }
 
@@ -1142,4 +1146,62 @@ fn test_tag_with_seq_containing_tag() {
         .filter(|e| matches!(e, Event::Error { .. }))
         .collect();
     assert!(errors.is_empty(), "Unexpected errors: {:?}", errors);
+}
+
+#[test]
+fn test_tag_with_typed_literal_in_seq() {
+    // This is the format used by schema_gen: @default(true @bool)
+    // It's a sequence with two elements: true and @bool (unit tag)
+    let input = "@default(true @bool)";
+    let events = parse_expr(input);
+    for event in &events {
+        eprintln!("{:?}", event);
+    }
+    let errors: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::Error { .. }))
+        .collect();
+    assert!(errors.is_empty(), "Unexpected errors: {:?}", errors);
+}
+
+#[test]
+fn test_schema_with_comma_separated_entries() {
+    // This is from the schema_gen tests - multiple entries in an object separated by commas
+    let input = r#"schema {@ @object{inner @Inner}, Inner @object{enabled @bool}}"#;
+    let events = parse(input);
+    for event in &events {
+        eprintln!("{:?}", event);
+    }
+    let errors: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::Error { .. }))
+        .collect();
+    assert!(errors.is_empty(), "Unexpected errors: {:?}", errors);
+}
+
+#[test]
+fn test_tag_unit_then_object() {
+    // @a @ {} - entry with tag @a, unit value, then second entry with empty object value
+    let input = "@a @ {}";
+    let events = parse(input);
+    for event in &events {
+        eprintln!("{:?}", event);
+    }
+    let errors: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::Error { .. }))
+        .collect();
+    assert!(errors.is_empty(), "Unexpected errors: {:?}", errors);
+
+    // Should have two entries
+    let entry_starts: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::EntryStart))
+        .collect();
+    assert_eq!(
+        entry_starts.len(),
+        2,
+        "Expected 2 entries, got {:?}",
+        entry_starts.len()
+    );
 }

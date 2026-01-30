@@ -6,4 +6,6 @@ FieldKey(Some("x"))
 SequenceStart
   VariantTag("Foo")
   Scalar(Unit)
-Error: ParseError { span: Span { offset: 8, len: 1 }, kind: UnexpectedToken { got: "unexpected atom after value (entry has too many atoms)", expected: "valid syntax" } }
+  VariantTag("Bar")
+  Scalar(Unit)
+SequenceEnd

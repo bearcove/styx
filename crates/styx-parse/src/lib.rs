@@ -30,5 +30,12 @@ mod token;
 pub use callback::ParseCallback;
 pub use event::{Event, ParseErrorKind, ScalarKind, Separator};
 pub use lexer::Lexer;
+pub use parser3::Parser3;
 pub use span::Span;
 pub use token::{Token, TokenKind};
+
+/// Pull-based streaming parser for Styx documents.
+///
+/// This is an alias for [`Parser3`], the modern pull-based parser implementation.
+/// It replaces the callback-based parser and provides a simple `next_event()` interface.
+pub type Parser2<'src> = Parser3<'src>;

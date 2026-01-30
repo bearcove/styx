@@ -28,6 +28,9 @@ enum State {
     /// Emit ObjectStart for implicit root object.
     EmitRootObjectStart,
 
+    /// Expression mode - expect a single value (no implicit root).
+    ExpectExprValue,
+
     /// Inside an object, expecting an entry (or closing brace/EOF).
     ExpectEntry,
 
@@ -40,8 +43,46 @@ enum State {
     /// Emit unit key (@ with no name), then read value.
     EmitUnitKeyValue { at_span: Span },
 
+    /// Emit DuplicateKey error for unit key, then continue to EmitUnitKeyValueWithToken.
+    EmitDuplicateUnitKeyError {
+        at_span: Span,
+        original_span: Span,
+        next_token_kind: TokenKind,
+        next_token_span: Span,
+    },
+
+    /// Emit DuplicateKey error for tagged key (@foo), then continue to AfterTaggedKey.
+    EmitDuplicateTaggedKeyError {
+        at_span: Span,
+        tag_span: Span,
+        original_span: Span,
+    },
+
+    /// After emitting tagged key (@foo), read the value.
+    AfterTaggedKey { full_span: Span, tag_span: Span },
+
+    /// Emit unit key with the already-read token info.
+    EmitUnitKeyValueWithToken {
+        at_span: Span,
+        token_kind: TokenKind,
+        token_span: Span,
+    },
+
     /// Emit Key event, then read value token.
     EmitKey {
+        key_span: Span,
+        key_kind: ScalarKind,
+    },
+
+    /// Emit DuplicateKey error, then continue to EmitKeyAfterDuplicateCheck.
+    EmitDuplicateKeyError {
+        key_span: Span,
+        key_kind: ScalarKind,
+        original_span: Span,
+    },
+
+    /// Emit Key event after duplicate check is done (skips re-checking).
+    EmitKeyAfterDuplicateCheck {
         key_span: Span,
         key_kind: ScalarKind,
     },
@@ -72,6 +113,21 @@ enum State {
 
     /// Emit EntryEnd after Unit, then ObjectEnd.
     EmitEntryEndAfterUnitThenObjectEnd { rbrace_span: Span },
+
+    /// Emit ObjectEnd after an error (like dangling doc comment).
+    EmitObjectEndAfterError { rbrace_span: Span },
+
+    /// Emit ObjectStart for explicit root after doc comment.
+    EmitExplicitRootAfterDocComment { lbrace_span: Span },
+
+    /// Handle chained doc comments - we have another doc comment to process.
+    ProcessNextDocComment { doc_span: Span },
+
+    /// Emit EntryEnd and check/update separator style.
+    EmitEntryEndWithSeparator {
+        separator: SeparatorStyle,
+        sep_span: Span,
+    },
 
     /// Emit scalar value, then TooManyAtoms error for extra atom.
     EmitScalarThenTooManyAtoms { value_span: Span, error_span: Span },
@@ -119,6 +175,14 @@ enum State {
 
     /// Inside a sequence, expecting an element.
     ExpectSeqElem,
+
+    /// Process a token we already peeked as a sequence element.
+    /// Used when we've consumed a token while checking for TooManyAtoms but
+    /// discovered we're in a sequence where multiple elements are valid.
+    ProcessPeekedSeqElem {
+        peeked_kind: TokenKind,
+        peeked_span: Span,
+    },
 
     /// Emit TagStart, then check for payload.
     EmitTagStart { tag_span: Span },
@@ -265,13 +329,31 @@ enum State {
     Done,
 }
 
-/// Context for nested structures.
+/// Separator style used in an object.
 #[derive(Debug, Clone, Copy, PartialEq)]
+enum SeparatorStyle {
+    /// Not yet determined.
+    Unknown,
+    /// Using commas.
+    Comma,
+    /// Using newlines.
+    Newline,
+}
+
+/// Context for nested structures.
+#[derive(Debug, Clone, PartialEq)]
 enum Context {
     /// Inside an object. `implicit` = true for the root object.
-    Object { implicit: bool },
-    /// Inside a sequence.
-    Sequence,
+    Object {
+        implicit: bool,
+        separator: SeparatorStyle,
+        /// Keys seen in this object: normalized_key -> original span (for duplicate detection).
+        seen_keys: std::collections::HashMap<String, Span>,
+        /// If true, this object is a tag payload and needs TagEnd emitted after ObjectEnd.
+        is_tag_payload: bool,
+    },
+    /// Inside a sequence. `is_tag_payload` indicates this is a tag payload.
+    Sequence { is_tag_payload: bool },
     /// Inside an attribute object (the `{...}` that holds attr key-value pairs).
     AttrObject,
 }
@@ -283,6 +365,18 @@ pub struct Parser3<'src> {
     state: State,
     /// Stack of nested contexts (objects/sequences).
     context_stack: Vec<Context>,
+    /// Current path of keys (for tracking terminals and reopens).
+    current_path: Vec<String>,
+    /// Paths that have received a terminal value (scalar/unit).
+    terminal_paths: std::collections::HashSet<Vec<String>>,
+    /// Paths that have been explicitly closed (with `}`).
+    closed_paths: std::collections::HashSet<Vec<String>>,
+    /// Depth of dotted path nesting (to track when to close paths).
+    dotted_depth: u32,
+    /// For each implicit object path from dotted paths, track the last child key.
+    /// When a new child is added at the same level, the previous child's subtree is closed.
+    /// Maps parent_path -> last_child_key
+    implicit_children: std::collections::HashMap<Vec<String>, String>,
     // WE DO NOT PEEK
     // WE DO NOT UNPEEK
     // WE DO NOT BUFFER EVENTS
@@ -293,12 +387,36 @@ pub struct Parser3<'src> {
 }
 
 impl<'src> Parser3<'src> {
+    /// Create a new parser in document mode (implicit root object).
     pub fn new(source: &'src str) -> Self {
         Self {
             input: source,
             lexer: Lexer::new(source),
             state: State::Start,
             context_stack: Vec::new(),
+            current_path: Vec::new(),
+            terminal_paths: std::collections::HashSet::new(),
+            closed_paths: std::collections::HashSet::new(),
+            dotted_depth: 0,
+            implicit_children: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Create a new parser in expression mode (single value, no implicit root).
+    ///
+    /// Expression mode parses a single value rather than an implicit root object.
+    /// Use this for parsing embedded values like default values in schemas.
+    pub fn new_expr(source: &'src str) -> Self {
+        Self {
+            input: source,
+            lexer: Lexer::new(source),
+            state: State::ExpectExprValue,
+            context_stack: Vec::new(),
+            current_path: Vec::new(),
+            terminal_paths: std::collections::HashSet::new(),
+            closed_paths: std::collections::HashSet::new(),
+            dotted_depth: 0,
+            implicit_children: std::collections::HashMap::new(),
         }
     }
 
@@ -471,6 +589,119 @@ impl<'src> Parser3<'src> {
         Cow::Owned(result)
     }
 
+    /// Check if a key is a duplicate in the current object context.
+    /// Returns Some(original_span) if this is a duplicate, None if it's new.
+    /// Also records the key in the seen_keys map.
+    fn check_and_record_key(&mut self, normalized_key: &str, key_span: Span) -> Option<Span> {
+        if let Some(Context::Object { seen_keys, .. }) = self.context_stack.last_mut() {
+            if let Some(&original_span) = seen_keys.get(normalized_key) {
+                return Some(original_span); // duplicate
+            }
+            seen_keys.insert(normalized_key.to_string(), key_span);
+        }
+        None
+    }
+
+    /// Check if a dotted path can be used. Returns Some error if:
+    /// - Any prefix is a terminal (NestIntoTerminal)
+    /// - Any prefix was previously closed (ReopenedPath)
+    fn check_dotted_path(&self, segments: &[&str]) -> Option<ParseErrorKind> {
+        // Build up path segment by segment, checking for terminals and closed paths
+        let mut check_path = self.current_path.clone();
+
+        for (i, &seg) in segments.iter().enumerate() {
+            check_path.push(seg.to_string());
+
+            // Check if this prefix is a terminal (can't nest into it)
+            if i < segments.len() - 1 {
+                // Not the last segment - check if it's a terminal
+                if self.terminal_paths.contains(&check_path) {
+                    return Some(ParseErrorKind::NestIntoTerminal {
+                        terminal_path: check_path,
+                    });
+                }
+                // Also check if this prefix was closed (can't extend a closed path)
+                if self.closed_paths.contains(&check_path) {
+                    return Some(ParseErrorKind::ReopenedPath {
+                        closed_path: check_path,
+                    });
+                }
+            }
+        }
+
+        // Check if the full path was previously closed
+        if self.closed_paths.contains(&check_path) {
+            return Some(ParseErrorKind::ReopenedPath {
+                closed_path: check_path,
+            });
+        }
+
+        None
+    }
+
+    /// Record that we're processing a dotted path, and close any previous sibling
+    /// branches that had explicit objects.
+    fn record_dotted_path_and_close_siblings(&mut self, segments: &[&str]) {
+        let mut parent_path = self.current_path.clone();
+
+        for (i, &seg) in segments.iter().enumerate() {
+            // Check if parent had a different child and close that branch if needed
+            // This applies to ALL segments, not just intermediate ones
+            if let Some(last_child) = self.implicit_children.get(&parent_path) {
+                if last_child != seg {
+                    // Parent had a different child - mark that branch as closed
+                    // if it had any descendants with explicit {}
+                    let mut old_child_path = parent_path.clone();
+                    old_child_path.push(last_child.clone());
+
+                    // Check if old_child_path or any of its descendants are in closed_paths
+                    let has_closed_descendants = self.closed_paths.iter().any(|p| {
+                        p.len() >= old_child_path.len()
+                            && p[..old_child_path.len()] == old_child_path[..]
+                    });
+
+                    if has_closed_descendants {
+                        // Mark the old child path as closed
+                        self.closed_paths.insert(old_child_path);
+                    }
+                }
+            }
+
+            // Record this child for this parent (for all segments except the last,
+            // which will get its own entry when it has a value)
+            if i < segments.len() - 1 {
+                self.implicit_children
+                    .insert(parent_path.clone(), seg.to_string());
+            }
+
+            parent_path.push(seg.to_string());
+        }
+    }
+
+    /// Mark the current path as terminal (received a scalar/unit value).
+    fn mark_path_terminal(&mut self) {
+        if !self.current_path.is_empty() {
+            self.terminal_paths.insert(self.current_path.clone());
+        }
+    }
+
+    /// Mark the current path as closed (object closed with `}`).
+    fn mark_path_closed(&mut self) {
+        if !self.current_path.is_empty() {
+            self.closed_paths.insert(self.current_path.clone());
+        }
+    }
+
+    /// Push a key segment onto the current path.
+    fn push_path_segment(&mut self, key: &str) {
+        self.current_path.push(key.to_string());
+    }
+
+    /// Pop a key segment from the current path.
+    fn pop_path_segment(&mut self) {
+        self.current_path.pop();
+    }
+
     pub fn parse_to_vec(mut self) -> Vec<Event<'src>> {
         let mut events = Vec::new();
         while let Some(event) = self.next_event() {
@@ -484,17 +715,99 @@ impl<'src> Parser3<'src> {
             trace!(state = ?self.state, "next_event");
             match std::mem::replace(&mut self.state, State::Done) {
                 State::Start => {
-                    self.state = State::EmitRootObjectStart;
+                    // Push implicit root context but don't emit ObjectStart for it.
+                    // The TreeBuilder creates its own implicit root from the entries.
+                    self.context_stack.push(Context::Object {
+                        implicit: true,
+                        separator: SeparatorStyle::Unknown,
+                        seen_keys: std::collections::HashMap::new(),
+                        is_tag_payload: false,
+                    });
+                    self.state = State::ExpectEntry;
                     return Some(Event::DocumentStart);
                 }
 
                 State::EmitRootObjectStart => {
-                    self.context_stack.push(Context::Object { implicit: true });
+                    // This state is no longer used for implicit root.
+                    // It may still be used if we need to emit an explicit root object.
+                    self.context_stack.push(Context::Object {
+                        implicit: true,
+                        separator: SeparatorStyle::Unknown,
+                        seen_keys: std::collections::HashMap::new(),
+                        is_tag_payload: false,
+                    });
                     self.state = State::ExpectEntry;
                     return Some(Event::ObjectStart {
                         span: Span::new(0, 0),
                         separator: Separator::Newline,
                     });
+                }
+
+                State::ExpectExprValue => {
+                    // Expression mode: parse a single value without implicit root object.
+                    // Skip leading whitespace/newlines.
+                    let t = self.next_token_skip_ws_nl();
+
+                    match t.kind {
+                        TokenKind::BareScalar => {
+                            self.state = State::Done;
+                            return Some(Event::Scalar {
+                                span: t.span,
+                                value: Cow::Borrowed(self.text_at(t.span)),
+                                kind: ScalarKind::Bare,
+                            });
+                        }
+                        TokenKind::QuotedScalar => {
+                            let text = self.text_at(t.span);
+                            self.state = State::Done;
+                            return Some(Event::Scalar {
+                                span: t.span,
+                                value: self.unescape_quoted(text),
+                                kind: ScalarKind::Quoted,
+                            });
+                        }
+                        TokenKind::LBrace => {
+                            // Explicit object as value
+                            self.context_stack.push(Context::Object {
+                                implicit: false,
+                                separator: SeparatorStyle::Unknown,
+                                seen_keys: std::collections::HashMap::new(),
+                                is_tag_payload: false,
+                            });
+                            self.state = State::ExpectEntry;
+                            return Some(Event::ObjectStart {
+                                span: t.span,
+                                separator: Separator::Comma,
+                            });
+                        }
+                        TokenKind::LParen => {
+                            // Sequence as value
+                            self.context_stack.push(Context::Sequence {
+                                is_tag_payload: false,
+                            });
+                            self.state = State::ExpectSeqElem;
+                            return Some(Event::SequenceStart { span: t.span });
+                        }
+                        TokenKind::At => {
+                            // Tag as value
+                            self.state = State::EmitTagStart { tag_span: t.span };
+                            continue;
+                        }
+                        TokenKind::Eof => {
+                            // Empty expression
+                            self.state = State::Done;
+                            return Some(Event::Unit {
+                                span: self.eof_span(),
+                            });
+                        }
+                        _ => {
+                            self.state = State::Done;
+                            return Some(Event::Error {
+                                span: t.span,
+                                kind: ParseErrorKind::UnexpectedToken,
+                            });
+                        }
+                    }
                 }
 
                 State::ExpectEntry => {
@@ -511,24 +824,86 @@ impl<'src> Parser3<'src> {
                         }
 
                         TokenKind::Eof => {
-                            // End of input - close root object
-                            self.context_stack.pop();
-                            self.state = State::EmitDocumentEnd;
-                            return Some(Event::ObjectEnd {
-                                span: self.eof_span(),
-                            });
+                            // End of input - check if we have unclosed structures
+                            match self.context_stack.last() {
+                                Some(Context::Object { implicit: true, .. }) => {
+                                    // Implicit root - OK, just close it
+                                    self.context_stack.pop();
+                                    self.state = State::EmitDocumentEnd;
+                                    continue;
+                                }
+                                Some(Context::Object {
+                                    implicit: false, ..
+                                }) => {
+                                    // Explicit object not closed - error
+                                    self.state = State::EmitDocumentEnd;
+                                    return Some(Event::Error {
+                                        span: self.eof_span(),
+                                        kind: ParseErrorKind::UnclosedObject,
+                                    });
+                                }
+                                Some(Context::Sequence { .. }) => {
+                                    // Sequence not closed - error
+                                    self.state = State::EmitDocumentEnd;
+                                    return Some(Event::Error {
+                                        span: self.eof_span(),
+                                        kind: ParseErrorKind::UnclosedSequence,
+                                    });
+                                }
+                                Some(Context::AttrObject) => {
+                                    // Attr object not closed - error
+                                    self.state = State::EmitDocumentEnd;
+                                    return Some(Event::Error {
+                                        span: self.eof_span(),
+                                        kind: ParseErrorKind::UnclosedObject,
+                                    });
+                                }
+                                None => {
+                                    self.state = State::EmitDocumentEnd;
+                                    continue;
+                                }
+                            }
                         }
 
                         TokenKind::RBrace => {
                             // Close explicit object
                             match self.context_stack.pop() {
-                                Some(Context::Object { implicit: false }) => {
-                                    self.state = State::EmitEntryEnd;
+                                Some(Context::Object {
+                                    implicit: false,
+                                    is_tag_payload,
+                                    ..
+                                }) => {
+                                    // If we're closing the value object of a dotted path,
+                                    // mark the current path as closed
+                                    if self.dotted_depth > 0 && !self.current_path.is_empty() {
+                                        self.mark_path_closed();
+                                    }
+                                    // Determine next state based on whether we're at root or nested
+                                    if self.context_stack.is_empty() {
+                                        // This was the root object - go to document end
+                                        self.state = State::EmitDocumentEnd;
+                                    } else if is_tag_payload {
+                                        // Tag payload - emit TagEnd after ObjectEnd
+                                        self.state = State::EmitTagEnd;
+                                    } else {
+                                        // Nested object - emit EntryEnd
+                                        self.state = State::EmitEntryEnd;
+                                    }
                                     return Some(Event::ObjectEnd { span: t.span });
                                 }
-                                Some(Context::Object { implicit: true }) => {
+                                Some(Context::Object {
+                                    implicit: true,
+                                    separator,
+                                    seen_keys,
+                                    is_tag_payload,
+                                }) => {
                                     // Can't close implicit root with }
-                                    self.context_stack.push(Context::Object { implicit: true });
+                                    self.context_stack.push(Context::Object {
+                                        implicit: true,
+                                        separator,
+                                        seen_keys,
+                                        is_tag_payload,
+                                    });
                                     self.state = State::ExpectEntry;
                                     return Some(Event::Error {
                                         span: t.span,
@@ -549,6 +924,28 @@ impl<'src> Parser3<'src> {
                             // Check for dotted path (e.g., "a.b.c")
                             let text = self.text_at(t.span);
                             if text.contains('.') {
+                                // Check for path errors before processing
+                                let segments: Vec<&str> = text.split('.').collect();
+                                if let Some(error_kind) = self.check_dotted_path(&segments) {
+                                    // Skip to end of entry and emit error
+                                    loop {
+                                        let skip = self.lexer.next_token();
+                                        match skip.kind {
+                                            TokenKind::Newline
+                                            | TokenKind::Eof
+                                            | TokenKind::Comma
+                                            | TokenKind::RBrace => break,
+                                            _ => continue,
+                                        }
+                                    }
+                                    self.state = State::ExpectEntry;
+                                    return Some(Event::Error {
+                                        span: t.span,
+                                        kind: error_kind,
+                                    });
+                                }
+                                // Record this path and close any sibling branches that had explicit {}
+                                self.record_dotted_path_and_close_siblings(&segments);
                                 self.state = State::EmitDottedPath {
                                     full_span: t.span,
                                     offset: 0, // offset within the token
@@ -576,10 +973,19 @@ impl<'src> Parser3<'src> {
                             // If we're at implicit root with no entries yet, this becomes an explicit root
                             // Otherwise it's an error (can't have nested object without a key)
                             match self.context_stack.last() {
-                                Some(Context::Object { implicit: true }) => {
+                                Some(Context::Object {
+                                    implicit: true,
+                                    separator: SeparatorStyle::Unknown,
+                                    ..
+                                }) => {
                                     // Replace implicit root with explicit root
                                     self.context_stack.pop();
-                                    self.context_stack.push(Context::Object { implicit: false });
+                                    self.context_stack.push(Context::Object {
+                                        implicit: false,
+                                        separator: SeparatorStyle::Unknown,
+                                        seen_keys: std::collections::HashMap::new(),
+                                        is_tag_payload: false,
+                                    });
                                     self.state = State::ExpectEntry;
                                     return Some(Event::ObjectStart {
                                         span: t.span,
@@ -602,10 +1008,198 @@ impl<'src> Parser3<'src> {
                         }
 
                         TokenKind::DocComment => {
-                            return Some(Event::DocComment {
+                            // Check if doc comment is followed by a valid entry
+                            // (not EOF, not close brace)
+                            let doc_span = t.span;
+                            let doc_text = t.text;
+                            let next = self.next_token_skip_ws_nl();
+                            match next.kind {
+                                TokenKind::Eof => {
+                                    // Dangling doc comment at EOF
+                                    self.state = State::EmitDocumentEnd;
+                                    return Some(Event::Error {
+                                        span: doc_span,
+                                        kind: ParseErrorKind::DanglingDocComment,
+                                    });
+                                }
+                                TokenKind::RBrace => {
+                                    // Dangling doc comment before close brace
+                                    // Pop the context and emit error, then handle the brace
+                                    match self.context_stack.pop() {
+                                        Some(Context::Object {
+                                            implicit: false, ..
+                                        }) => {
+                                            self.state = State::EmitEntryEnd;
+                                            // Need to emit error, then ObjectEnd
+                                            // But we need to emit error first, then handle }
+                                            // This is getting complex - let's emit error and
+                                            // "put back" the } by storing it
+                                            self.state = State::EmitObjectEndAfterError {
+                                                rbrace_span: next.span,
+                                            };
+                                            return Some(Event::Error {
+                                                span: doc_span,
+                                                kind: ParseErrorKind::DanglingDocComment,
+                                            });
+                                        }
+                                        Some(ctx) => {
+                                            // Put context back and emit error
+                                            self.context_stack.push(ctx);
+                                            self.state = State::ExpectEntry;
+                                            return Some(Event::Error {
+                                                span: doc_span,
+                                                kind: ParseErrorKind::DanglingDocComment,
+                                            });
+                                        }
+                                        None => {
+                                            self.state = State::EmitDocumentEnd;
+                                            return Some(Event::Error {
+                                                span: doc_span,
+                                                kind: ParseErrorKind::DanglingDocComment,
+                                            });
+                                        }
+                                    }
+                                }
+                                TokenKind::BareScalar => {
+                                    // Check for dotted path
+                                    let text = self.text_at(next.span);
+                                    if text.contains('.') {
+                                        // Check for path errors before processing
+                                        let segments: Vec<&str> = text.split('.').collect();
+                                        if let Some(error_kind) = self.check_dotted_path(&segments)
+                                        {
+                                            // Skip to end of entry and emit error
+                                            loop {
+                                                let skip = self.lexer.next_token();
+                                                match skip.kind {
+                                                    TokenKind::Newline
+                                                    | TokenKind::Eof
+                                                    | TokenKind::Comma
+                                                    | TokenKind::RBrace => break,
+                                                    _ => continue,
+                                                }
+                                            }
+                                            self.state = State::ExpectEntry;
+                                            return Some(Event::Error {
+                                                span: next.span,
+                                                kind: error_kind,
+                                            });
+                                        }
+                                        // Record this path and close any sibling branches that had explicit {}
+                                        self.record_dotted_path_and_close_siblings(&segments);
+                                        self.state = State::EmitDottedPath {
+                                            full_span: next.span,
+                                            offset: 0,
+                                            depth: 0,
+                                        };
+                                    } else {
+                                        self.state = State::EmitEntryStart {
+                                            key_span: next.span,
+                                            key_kind: ScalarKind::Bare,
+                                        };
+                                    }
+                                    return Some(Event::DocComment {
+                                        span: doc_span,
+                                        text: doc_text,
+                                    });
+                                }
+                                TokenKind::QuotedScalar => {
+                                    self.state = State::EmitEntryStart {
+                                        key_span: next.span,
+                                        key_kind: ScalarKind::Quoted,
+                                    };
+                                    return Some(Event::DocComment {
+                                        span: doc_span,
+                                        text: doc_text,
+                                    });
+                                }
+                                TokenKind::At => {
+                                    self.state = State::EmitUnitKeyValue { at_span: next.span };
+                                    return Some(Event::DocComment {
+                                        span: doc_span,
+                                        text: doc_text,
+                                    });
+                                }
+                                TokenKind::LBrace => {
+                                    // Doc comment before explicit root object
+                                    // Replace implicit root with explicit
+                                    match self.context_stack.last() {
+                                        Some(Context::Object {
+                                            implicit: true,
+                                            separator: SeparatorStyle::Unknown,
+                                            ..
+                                        }) => {
+                                            self.context_stack.pop();
+                                            self.context_stack.push(Context::Object {
+                                                implicit: false,
+                                                separator: SeparatorStyle::Unknown,
+                                                seen_keys: std::collections::HashMap::new(),
+                                                is_tag_payload: false,
+                                            });
+                                            self.state = State::ExpectEntry;
+                                            // Emit doc comment, then will emit ObjectStart
+                                            // But we already consumed the {, so we need a state for it
+                                            self.state = State::EmitExplicitRootAfterDocComment {
+                                                lbrace_span: next.span,
+                                            };
+                                            return Some(Event::DocComment {
+                                                span: doc_span,
+                                                text: doc_text,
+                                            });
+                                        }
+                                        _ => {
+                                            self.state = State::ExpectEntry;
+                                            return Some(Event::Error {
+                                                span: doc_span,
+                                                kind: ParseErrorKind::DanglingDocComment,
+                                            });
+                                        }
+                                    }
+                                }
+                                TokenKind::DocComment => {
+                                    // Multiple doc comments in a row - emit this one and process next
+                                    self.state = State::ProcessNextDocComment {
+                                        doc_span: next.span,
+                                    };
+                                    return Some(Event::DocComment {
+                                        span: doc_span,
+                                        text: doc_text,
+                                    });
+                                }
+                                _ => {
+                                    // Doc comment followed by something unexpected
+                                    self.state = State::ExpectEntry;
+                                    return Some(Event::Error {
+                                        span: doc_span,
+                                        kind: ParseErrorKind::DanglingDocComment,
+                                    });
+                                }
+                            }
+                        }
+
+                        TokenKind::HeredocStart => {
+                            // Heredocs are not allowed as keys
+                            // Skip to end of heredoc
+                            loop {
+                                let skip = self.lexer.next_token();
+                                match skip.kind {
+                                    TokenKind::HeredocEnd | TokenKind::Eof => break,
+                                    _ => continue,
+                                }
+                            }
+                            self.state = State::ExpectEntry;
+                            return Some(Event::Error {
                                 span: t.span,
-                                text: t.text,
+                                kind: ParseErrorKind::InvalidKey,
                             });
+                        }
+
+                        TokenKind::Comma => {
+                            // Comma as separator between entries - just skip it
+                            // (The entry may have ended due to something other than a comma,
+                            // e.g., a closing brace for a nested value)
+                            self.state = State::ExpectEntry;
+                            continue;
                         }
 
                         _ => {
@@ -637,11 +1231,10 @@ impl<'src> Parser3<'src> {
                 }
 
                 State::EmitUnitKeyValue { at_span } => {
-                    // Emit Key with no payload, then read value
                     // First read next token - check if it's immediately after @ (tag)
                     let t = self.lexer.next_token();
 
-                    // If bare scalar immediately after @, it's a tag name
+                    // If bare scalar immediately after @, it's a tag name like @foo
                     if t.kind == TokenKind::BareScalar && t.span.start == at_span.end {
                         // This is actually a tag like @SomeTag or @Some.Type
                         let tag_name = self.text_at(t.span);
@@ -661,24 +1254,181 @@ impl<'src> Parser3<'src> {
                                 kind: ParseErrorKind::InvalidTagName,
                             });
                         }
-                        // Valid tag - process it
-                        self.state = State::AfterTagStart { tag_span: t.span };
-                        return Some(Event::TagStart {
-                            span: Span::new(at_span.start, t.span.end),
-                            name: tag_name,
+
+                        // Check for duplicate tagged key - use "@tagname" as the key
+                        let full_span = Span::new(at_span.start, t.span.end);
+                        let key_name = format!("@{}", tag_name);
+                        if let Some(original_span) = self.check_and_record_key(&key_name, full_span)
+                        {
+                            // It's a duplicate - emit error first
+                            self.state = State::EmitDuplicateTaggedKeyError {
+                                at_span,
+                                tag_span: t.span,
+                                original_span,
+                            };
+                            continue;
+                        }
+
+                        // Tagged key - emit Key event with tag, then read value
+                        self.state = State::AfterTaggedKey {
+                            full_span,
+                            tag_span: t.span,
+                        };
+                        return Some(Event::Key {
+                            span: full_span,
+                            tag: Some(tag_name),
+                            payload: None,
+                            kind: ScalarKind::Bare,
                         });
                     }
 
-                    // Skip whitespace if needed
-                    let t = if t.kind == TokenKind::Whitespace {
-                        self.next_token_skip_ws()
-                    } else {
-                        t
+                    // Not a tagged key - it's a unit key @
+                    // Check for duplicate unit key (empty string key)
+                    if let Some(original_span) = self.check_and_record_key("", at_span) {
+                        // It's a duplicate - emit error first, then come back
+                        self.state = State::EmitDuplicateUnitKeyError {
+                            at_span,
+                            original_span,
+                            next_token_kind: t.kind,
+                            next_token_span: t.span,
+                        };
+                        continue;
+                    }
+
+                    // Continue to actual key emission (with the token we already read)
+                    self.state = State::EmitUnitKeyValueWithToken {
+                        at_span,
+                        token_kind: t.kind,
+                        token_span: t.span,
                     };
+                    continue;
+                }
+
+                State::EmitDuplicateUnitKeyError {
+                    at_span,
+                    original_span,
+                    next_token_kind,
+                    next_token_span,
+                } => {
+                    // Emit the DuplicateKey error, then continue to EmitUnitKeyValueWithToken
+                    self.state = State::EmitUnitKeyValueWithToken {
+                        at_span,
+                        token_kind: next_token_kind,
+                        token_span: next_token_span,
+                    };
+                    return Some(Event::Error {
+                        span: at_span,
+                        kind: ParseErrorKind::DuplicateKey {
+                            original: original_span,
+                        },
+                    });
+                }
+
+                State::EmitDuplicateTaggedKeyError {
+                    at_span,
+                    tag_span,
+                    original_span,
+                } => {
+                    // Emit the DuplicateKey error, then continue to AfterTaggedKey
+                    let full_span = Span::new(at_span.start, tag_span.end);
+                    self.state = State::AfterTaggedKey {
+                        full_span,
+                        tag_span,
+                    };
+                    return Some(Event::Error {
+                        span: full_span,
+                        kind: ParseErrorKind::DuplicateKey {
+                            original: original_span,
+                        },
+                    });
+                }
+
+                State::AfterTaggedKey {
+                    full_span,
+                    tag_span,
+                } => {
+                    // After emitting tagged key, read the value
+                    let t = self.next_token_skip_ws();
 
                     match t.kind {
                         TokenKind::BareScalar => {
                             self.state = State::AfterBareScalarValue { value_span: t.span };
+                            return Some(Event::Scalar {
+                                span: t.span,
+                                value: Cow::Borrowed(self.text_at(t.span)),
+                                kind: ScalarKind::Bare,
+                            });
+                        }
+                        TokenKind::QuotedScalar => {
+                            let text = self.text_at(t.span);
+                            self.state = State::EmitEntryEnd;
+                            return Some(Event::Scalar {
+                                span: t.span,
+                                value: self.unescape_quoted(text),
+                                kind: ScalarKind::Quoted,
+                            });
+                        }
+                        TokenKind::Newline | TokenKind::Eof => {
+                            self.state = State::EmitEntryEnd;
+                            return Some(Event::Unit { span: full_span });
+                        }
+                        TokenKind::RBrace => {
+                            // Key with unit value, then close brace
+                            self.state = State::EmitUnitThenEntryEndThenObjectEnd {
+                                unit_span: full_span,
+                                rbrace_span: t.span,
+                            };
+                            continue;
+                        }
+                        TokenKind::Comma => {
+                            // Key with unit value, then comma (entry separator)
+                            self.state = State::EmitEntryEndWithSeparator {
+                                separator: SeparatorStyle::Comma,
+                                sep_span: t.span,
+                            };
+                            return Some(Event::Unit { span: full_span });
+                        }
+                        TokenKind::LBrace => {
+                            // Go to the state that will emit ObjectStart
+                            self.state = State::EmitObjectStartValue { span: t.span };
+                            continue;
+                        }
+                        TokenKind::LParen => {
+                            // Go to the state that will emit SequenceStart
+                            self.state = State::EmitSequenceStartValue { span: t.span };
+                            continue;
+                        }
+                        TokenKind::At => {
+                            // Tag value - go to the state that will read tag name and emit TagStart
+                            self.state = State::EmitTagStart { tag_span: t.span };
+                            continue;
+                        }
+                        _ => {
+                            self.state = State::EmitEntryEnd;
+                            return Some(Event::Error {
+                                span: t.span,
+                                kind: ParseErrorKind::UnexpectedToken,
+                            });
+                        }
+                    }
+                }
+
+                State::EmitUnitKeyValueWithToken {
+                    at_span,
+                    token_kind,
+                    token_span,
+                } => {
+                    // Skip whitespace if needed - but we already have the token info
+                    let (t_kind, t_span) = if token_kind == TokenKind::Whitespace {
+                        let next = self.next_token_skip_ws();
+                        (next.kind, next.span)
+                    } else {
+                        (token_kind, token_span)
+                    };
+
+                    match t_kind {
+                        TokenKind::BareScalar => {
+                            self.state = State::AfterBareScalarValue { value_span: t_span };
                             return Some(Event::Key {
                                 span: at_span,
                                 tag: None,
@@ -688,7 +1438,7 @@ impl<'src> Parser3<'src> {
                         }
                         TokenKind::QuotedScalar => {
                             self.state = State::EmitScalarValue {
-                                span: t.span,
+                                span: t_span,
                                 kind: ScalarKind::Quoted,
                             };
                             return Some(Event::Key {
@@ -708,7 +1458,7 @@ impl<'src> Parser3<'src> {
                             });
                         }
                         TokenKind::LBrace => {
-                            self.state = State::EmitObjectStartValue { span: t.span };
+                            self.state = State::EmitObjectStartValue { span: t_span };
                             return Some(Event::Key {
                                 span: at_span,
                                 tag: None,
@@ -717,7 +1467,7 @@ impl<'src> Parser3<'src> {
                             });
                         }
                         TokenKind::LParen => {
-                            self.state = State::EmitSequenceStartValue { span: t.span };
+                            self.state = State::EmitSequenceStartValue { span: t_span };
                             return Some(Event::Key {
                                 span: at_span,
                                 tag: None,
@@ -727,7 +1477,7 @@ impl<'src> Parser3<'src> {
                         }
                         TokenKind::At => {
                             // Tag value
-                            self.state = State::EmitTagStart { tag_span: t.span };
+                            self.state = State::EmitTagStart { tag_span: t_span };
                             return Some(Event::Key {
                                 span: at_span,
                                 tag: None,
@@ -738,15 +1488,57 @@ impl<'src> Parser3<'src> {
                         _ => {
                             self.state = State::EmitEntryEnd;
                             return Some(Event::Error {
-                                span: t.span,
+                                span: t_span,
                                 kind: ParseErrorKind::UnexpectedToken,
                             });
                         }
                     }
                 }
 
+                State::EmitDuplicateKeyError {
+                    key_span,
+                    key_kind,
+                    original_span,
+                } => {
+                    // Emit the DuplicateKey error, then continue to EmitKeyAfterDuplicateCheck
+                    // (which skips the duplicate check)
+                    self.state = State::EmitKeyAfterDuplicateCheck { key_span, key_kind };
+                    return Some(Event::Error {
+                        span: key_span,
+                        kind: ParseErrorKind::DuplicateKey {
+                            original: original_span,
+                        },
+                    });
+                }
+
                 State::EmitKey { key_span, key_kind } => {
-                    // Get the key text
+                    // Get the key text and check for duplicates
+                    let key_text = self.text_at(key_span);
+                    let normalized_key = match key_kind {
+                        ScalarKind::Quoted => self.unescape_quoted(key_text),
+                        _ => Cow::Borrowed(key_text),
+                    };
+
+                    // Check for duplicate key
+                    if let Some(original_span) =
+                        self.check_and_record_key(&normalized_key, key_span)
+                    {
+                        // It's a duplicate - emit error first, then come back
+                        self.state = State::EmitDuplicateKeyError {
+                            key_span,
+                            key_kind,
+                            original_span,
+                        };
+                        continue;
+                    }
+
+                    // Continue to the actual key emission logic
+                    self.state = State::EmitKeyAfterDuplicateCheck { key_span, key_kind };
+                    continue;
+                }
+
+                State::EmitKeyAfterDuplicateCheck { key_span, key_kind } => {
+                    // Get the key text (duplicate check already done)
                     let key_text = self.text_at(key_span);
                     let key_payload = match key_kind {
                         ScalarKind::Quoted => self.unescape_quoted(key_text),
@@ -965,9 +1757,25 @@ impl<'src> Parser3<'src> {
                             });
                         }
 
-                        TokenKind::Newline | TokenKind::Eof | TokenKind::Comma => {
-                            // Normal value - emit scalar now
-                            self.state = State::EmitEntryEnd;
+                        TokenKind::Newline | TokenKind::Eof => {
+                            // Normal value with newline separator - emit scalar now
+                            self.state = State::EmitEntryEndWithSeparator {
+                                separator: SeparatorStyle::Newline,
+                                sep_span: t.span,
+                            };
+                            return Some(Event::Scalar {
+                                span: value_span,
+                                value: Cow::Borrowed(self.text_at(value_span)),
+                                kind: ScalarKind::Bare,
+                            });
+                        }
+
+                        TokenKind::Comma => {
+                            // Normal value with comma separator
+                            self.state = State::EmitEntryEndWithSeparator {
+                                separator: SeparatorStyle::Comma,
+                                sep_span: t.span,
+                            };
                             return Some(Event::Scalar {
                                 span: value_span,
                                 value: Cow::Borrowed(self.text_at(value_span)),
@@ -980,12 +1788,51 @@ impl<'src> Parser3<'src> {
                             // If it's another scalar on the same line, that's TooManyAtoms
                             let next = self.next_token_skip_ws();
                             match next.kind {
-                                TokenKind::Newline
-                                | TokenKind::Eof
-                                | TokenKind::Comma
-                                | TokenKind::RBrace
-                                | TokenKind::RParen
-                                | TokenKind::LineComment => {
+                                TokenKind::Newline | TokenKind::Eof => {
+                                    self.state = State::EmitEntryEndWithSeparator {
+                                        separator: SeparatorStyle::Newline,
+                                        sep_span: next.span,
+                                    };
+                                    return Some(Event::Scalar {
+                                        span: value_span,
+                                        value: Cow::Borrowed(self.text_at(value_span)),
+                                        kind: ScalarKind::Bare,
+                                    });
+                                }
+                                TokenKind::Comma => {
+                                    self.state = State::EmitEntryEndWithSeparator {
+                                        separator: SeparatorStyle::Comma,
+                                        sep_span: next.span,
+                                    };
+                                    return Some(Event::Scalar {
+                                        span: value_span,
+                                        value: Cow::Borrowed(self.text_at(value_span)),
+                                        kind: ScalarKind::Bare,
+                                    });
+                                }
+                                TokenKind::RBrace => {
+                                    // Value, then close object
+                                    self.state = State::EmitEntryEndThenObjectEnd {
+                                        rbrace_span: next.span,
+                                    };
+                                    return Some(Event::Scalar {
+                                        span: value_span,
+                                        value: Cow::Borrowed(self.text_at(value_span)),
+                                        kind: ScalarKind::Bare,
+                                    });
+                                }
+                                TokenKind::RParen => {
+                                    // Value, then close sequence
+                                    self.state = State::EmitEntryEndThenSeqEnd {
+                                        rparen_span: next.span,
+                                    };
+                                    return Some(Event::Scalar {
+                                        span: value_span,
+                                        value: Cow::Borrowed(self.text_at(value_span)),
+                                        kind: ScalarKind::Bare,
+                                    });
+                                }
+                                TokenKind::LineComment => {
                                     // OK - entry ends here
                                     self.state = State::EmitEntryEnd;
                                     return Some(Event::Scalar {
@@ -1055,7 +1902,9 @@ impl<'src> Parser3<'src> {
                             TokenKind::RBrace => {
                                 // Need to handle close brace
                                 match self.context_stack.last() {
-                                    Some(Context::Object { implicit: false }) => {
+                                    Some(Context::Object {
+                                        implicit: false, ..
+                                    }) => {
                                         self.context_stack.pop();
                                         // Don't emit ObjectEnd here - we'll do it after EntryEnd
                                         // Actually, this is complex. Just break and let normal flow handle it.
@@ -1086,6 +1935,129 @@ impl<'src> Parser3<'src> {
                 State::EmitEntryEndAfterUnitThenObjectEnd { rbrace_span } => {
                     self.state = State::EmitObjectEndAfterEntry { rbrace_span };
                     return Some(Event::EntryEnd);
+                }
+
+                State::EmitObjectEndAfterError { rbrace_span } => {
+                    self.state = State::EmitEntryEnd;
+                    return Some(Event::ObjectEnd { span: rbrace_span });
+                }
+
+                State::EmitExplicitRootAfterDocComment { lbrace_span } => {
+                    self.state = State::ExpectEntry;
+                    return Some(Event::ObjectStart {
+                        span: lbrace_span,
+                        separator: Separator::Comma,
+                    });
+                }
+
+                State::ProcessNextDocComment { doc_span } => {
+                    // We have a doc comment to emit, then check what follows
+                    let doc_text = self.text_at(doc_span);
+                    let next = self.next_token_skip_ws_nl();
+                    match next.kind {
+                        TokenKind::Eof => {
+                            self.state = State::EmitDocumentEnd;
+                            return Some(Event::Error {
+                                span: doc_span,
+                                kind: ParseErrorKind::DanglingDocComment,
+                            });
+                        }
+                        TokenKind::RBrace => match self.context_stack.pop() {
+                            Some(Context::Object {
+                                implicit: false, ..
+                            }) => {
+                                self.state = State::EmitObjectEndAfterError {
+                                    rbrace_span: next.span,
+                                };
+                                return Some(Event::Error {
+                                    span: doc_span,
+                                    kind: ParseErrorKind::DanglingDocComment,
+                                });
+                            }
+                            Some(ctx) => {
+                                self.context_stack.push(ctx);
+                                self.state = State::ExpectEntry;
+                                return Some(Event::Error {
+                                    span: doc_span,
+                                    kind: ParseErrorKind::DanglingDocComment,
+                                });
+                            }
+                            None => {
+                                self.state = State::EmitDocumentEnd;
+                                return Some(Event::Error {
+                                    span: doc_span,
+                                    kind: ParseErrorKind::DanglingDocComment,
+                                });
+                            }
+                        },
+                        TokenKind::BareScalar => {
+                            let text = self.text_at(next.span);
+                            if text.contains('.') {
+                                // Check for path errors before processing
+                                let segments: Vec<&str> = text.split('.').collect();
+                                if let Some(error_kind) = self.check_dotted_path(&segments) {
+                                    // Skip to end of entry and emit error
+                                    loop {
+                                        let skip = self.lexer.next_token();
+                                        match skip.kind {
+                                            TokenKind::Newline
+                                            | TokenKind::Eof
+                                            | TokenKind::Comma
+                                            | TokenKind::RBrace => break,
+                                            _ => continue,
+                                        }
+                                    }
+                                    self.state = State::ExpectEntry;
+                                    return Some(Event::Error {
+                                        span: next.span,
+                                        kind: error_kind,
+                                    });
+                                }
+                                // Record this path and close any sibling branches that had explicit {}
+                                self.record_dotted_path_and_close_siblings(&segments);
+                                self.state = State::EmitDottedPath {
+                                    full_span: next.span,
+                                    offset: 0,
+                                    depth: 0,
+                                };
+                            } else {
+                                self.state = State::EmitEntryStart {
+                                    key_span: next.span,
+                                    key_kind: ScalarKind::Bare,
+                                };
+                            }
+                            return Some(Event::DocComment {
+                                span: doc_span,
+                                text: doc_text,
+                            });
+                        }
+                        TokenKind::QuotedScalar => {
+                            self.state = State::EmitEntryStart {
+                                key_span: next.span,
+                                key_kind: ScalarKind::Quoted,
+                            };
+                            return Some(Event::DocComment {
+                                span: doc_span,
+                                text: doc_text,
+                            });
+                        }
+                        TokenKind::DocComment => {
+                            self.state = State::ProcessNextDocComment {
+                                doc_span: next.span,
+                            };
+                            return Some(Event::DocComment {
+                                span: doc_span,
+                                text: doc_text,
+                            });
+                        }
+                        _ => {
+                            self.state = State::ExpectEntry;
+                            return Some(Event::Error {
+                                span: doc_span,
+                                kind: ParseErrorKind::DanglingDocComment,
+                            });
+                        }
+                    }
                 }
 
                 State::EmitScalarThenTooManyAtoms {
@@ -1177,16 +2149,20 @@ impl<'src> Parser3<'src> {
                             continue;
                         }
                         TokenKind::RBrace => {
-                            // Close object
-                            self.context_stack.pop();
-                            self.state = State::EmitEntryEnd;
-                            return Some(Event::ObjectEnd { span: t.span });
+                            // Close object - need EntryEnd first, then ObjectEnd
+                            // Use existing state machine flow which handles tag payloads
+                            self.state = State::EmitEntryEndThenObjectEnd {
+                                rbrace_span: t.span,
+                            };
+                            continue;
                         }
                         TokenKind::RParen => {
-                            // Close sequence
-                            self.context_stack.pop();
-                            self.state = State::EmitEntryEnd;
-                            return Some(Event::SequenceEnd { span: t.span });
+                            // Close sequence - need EntryEnd first, then SequenceEnd
+                            // Use existing state machine flow which handles tag payloads
+                            self.state = State::EmitEntryEndThenSeqEnd {
+                                rparen_span: t.span,
+                            };
+                            continue;
                         }
                         TokenKind::Whitespace => {
                             // Check what follows whitespace
@@ -1200,14 +2176,18 @@ impl<'src> Parser3<'src> {
                                     continue;
                                 }
                                 TokenKind::RBrace => {
-                                    self.context_stack.pop();
-                                    self.state = State::EmitEntryEnd;
-                                    return Some(Event::ObjectEnd { span: next.span });
+                                    // Need EntryEnd first, then ObjectEnd
+                                    self.state = State::EmitEntryEndThenObjectEnd {
+                                        rbrace_span: next.span,
+                                    };
+                                    continue;
                                 }
                                 TokenKind::RParen => {
-                                    self.context_stack.pop();
-                                    self.state = State::EmitEntryEnd;
-                                    return Some(Event::SequenceEnd { span: next.span });
+                                    // Need EntryEnd first, then SequenceEnd
+                                    self.state = State::EmitEntryEndThenSeqEnd {
+                                        rparen_span: next.span,
+                                    };
+                                    continue;
                                 }
                                 TokenKind::BareScalar | TokenKind::QuotedScalar => {
                                     // TooManyAtoms!
@@ -1236,12 +2216,24 @@ impl<'src> Parser3<'src> {
                 }
 
                 State::EmitEntryEnd => {
-                    // After EntryEnd, check what context we're in
+                    // If we're finishing a dotted path value, continue closing
+                    if self.dotted_depth > 0 {
+                        // Pop the key from the path
+                        self.pop_path_segment();
+                        // Continue closing the dotted path
+                        self.state = State::CloseDottedPath {
+                            depth: self.dotted_depth,
+                        };
+                        self.dotted_depth = 0; // Reset
+                        return Some(Event::EntryEnd);
+                    }
+
+                    // Normal case: after EntryEnd, check what context we're in
                     match self.context_stack.last() {
                         Some(Context::Object { .. }) => {
                             self.state = State::ExpectEntry;
                         }
-                        Some(Context::Sequence) => {
+                        Some(Context::Sequence { .. }) => {
                             self.state = State::ExpectSeqElem;
                         }
                         Some(Context::AttrObject) => {
@@ -1254,14 +2246,72 @@ impl<'src> Parser3<'src> {
                     return Some(Event::EntryEnd);
                 }
 
+                State::EmitEntryEndWithSeparator {
+                    separator: new_sep,
+                    sep_span,
+                } => {
+                    // Check separator consistency
+                    // Get current separator style without moving the context
+                    let (implicit, current_sep) = match self.context_stack.last() {
+                        Some(Context::Object {
+                            implicit,
+                            separator,
+                            ..
+                        }) => (*implicit, *separator),
+                        _ => {
+                            // Not in an object - just go to ExpectEntry
+                            self.state = State::ExpectEntry;
+                            return Some(Event::EntryEnd);
+                        }
+                    };
+
+                    match current_sep {
+                        SeparatorStyle::Unknown => {
+                            // First separator - record it by updating the context
+                            if let Some(Context::Object { separator, .. }) =
+                                self.context_stack.last_mut()
+                            {
+                                *separator = new_sep;
+                            }
+                            self.state = State::ExpectEntry;
+                        }
+                        _ if current_sep == new_sep => {
+                            // Same separator - OK
+                            self.state = State::ExpectEntry;
+                        }
+                        _ => {
+                            // Mixed separators - error!
+                            // But we still need to continue, so go to ExpectEntry
+                            self.state = State::ExpectEntry;
+                            return Some(Event::Error {
+                                span: sep_span,
+                                kind: ParseErrorKind::MixedSeparators,
+                            });
+                        }
+                    }
+
+                    let _ = implicit; // suppress warning
+                    return Some(Event::EntryEnd);
+                }
+
                 State::EmitEntryEndThenObjectEnd { rbrace_span } => {
                     self.state = State::EmitObjectEndAfterEntry { rbrace_span };
                     return Some(Event::EntryEnd);
                 }
 
                 State::EmitObjectEndAfterEntry { rbrace_span } => {
-                    self.context_stack.pop();
-                    self.state = State::EmitEntryEnd;
+                    let is_tag_payload = match self.context_stack.pop() {
+                        Some(Context::Object { is_tag_payload, .. }) => is_tag_payload,
+                        _ => false,
+                    };
+                    if self.context_stack.is_empty() {
+                        // This was the root explicit object - no outer entry to close
+                        self.state = State::EmitDocumentEnd;
+                    } else if is_tag_payload {
+                        self.state = State::EmitTagEnd;
+                    } else {
+                        self.state = State::EmitEntryEnd;
+                    }
                     return Some(Event::ObjectEnd { span: rbrace_span });
                 }
 
@@ -1271,13 +2321,28 @@ impl<'src> Parser3<'src> {
                 }
 
                 State::EmitSeqEndAfterEntry { rparen_span } => {
-                    self.context_stack.pop();
-                    self.state = State::EmitEntryEnd;
+                    let is_tag_payload = match self.context_stack.pop() {
+                        Some(Context::Sequence { is_tag_payload }) => is_tag_payload,
+                        _ => false,
+                    };
+                    if self.context_stack.is_empty() {
+                        // This was the root explicit sequence - no outer entry to close
+                        self.state = State::EmitDocumentEnd;
+                    } else if is_tag_payload {
+                        self.state = State::EmitTagEnd;
+                    } else {
+                        self.state = State::EmitEntryEnd;
+                    }
                     return Some(Event::SequenceEnd { span: rparen_span });
                 }
 
                 State::EmitObjectStartValue { span } => {
-                    self.context_stack.push(Context::Object { implicit: false });
+                    self.context_stack.push(Context::Object {
+                        implicit: false,
+                        separator: SeparatorStyle::Unknown,
+                        seen_keys: std::collections::HashMap::new(),
+                        is_tag_payload: false,
+                    });
                     self.state = State::ExpectEntry;
                     return Some(Event::ObjectStart {
                         span,
@@ -1286,7 +2351,9 @@ impl<'src> Parser3<'src> {
                 }
 
                 State::EmitSequenceStartValue { span } => {
-                    self.context_stack.push(Context::Sequence);
+                    self.context_stack.push(Context::Sequence {
+                        is_tag_payload: false,
+                    });
                     self.state = State::ExpectSeqElem;
                     return Some(Event::SequenceStart { span });
                 }
@@ -1361,7 +2428,12 @@ impl<'src> Parser3<'src> {
                     match t.kind {
                         TokenKind::LBrace if t.span.start == tag_span.end => {
                             // @tag{...} - object payload
-                            self.context_stack.push(Context::Object { implicit: false });
+                            self.context_stack.push(Context::Object {
+                                implicit: false,
+                                separator: SeparatorStyle::Unknown,
+                                seen_keys: std::collections::HashMap::new(),
+                                is_tag_payload: true,
+                            });
                             self.state = State::ExpectEntry;
                             return Some(Event::ObjectStart {
                                 span: t.span,
@@ -1371,7 +2443,9 @@ impl<'src> Parser3<'src> {
 
                         TokenKind::LParen if t.span.start == tag_span.end => {
                             // @tag(...) - sequence payload
-                            self.context_stack.push(Context::Sequence);
+                            self.context_stack.push(Context::Sequence {
+                                is_tag_payload: true,
+                            });
                             self.state = State::ExpectSeqElem;
                             return Some(Event::SequenceStart { span: t.span });
                         }
@@ -1419,14 +2493,103 @@ impl<'src> Parser3<'src> {
                             return Some(Event::TagEnd);
                         }
 
-                        // Whitespace or other - tag has no payload (implicit unit)
+                        // Whitespace - tag has no immediate payload, but check for TooManyAtoms
+                        TokenKind::Whitespace => {
+                            // Check if there's another token on this line (TooManyAtoms)
+                            let next = self.next_token_skip_ws();
+                            match next.kind {
+                                TokenKind::Newline | TokenKind::Eof | TokenKind::Comma => {
+                                    // OK - entry ends
+                                    match self.context_stack.last() {
+                                        Some(Context::Object { .. }) => {
+                                            self.state = State::EmitEntryEnd;
+                                        }
+                                        Some(Context::Sequence { .. }) => {
+                                            self.state = State::ExpectSeqElem;
+                                        }
+                                        Some(Context::AttrObject) => {
+                                            self.state = State::EmitEntryEnd;
+                                        }
+                                        None => {
+                                            self.state = State::EmitDocumentEnd;
+                                        }
+                                    }
+                                    return Some(Event::TagEnd);
+                                }
+                                TokenKind::RBrace => {
+                                    // Tag value, then close object
+                                    self.state = State::EmitTagEndThenObjEnd {
+                                        rbrace_span: next.span,
+                                    };
+                                    return Some(Event::TagEnd);
+                                }
+                                TokenKind::RParen => {
+                                    // Tag value, then close sequence
+                                    self.state = State::EmitTagEndThenSeqEnd {
+                                        rparen_span: next.span,
+                                    };
+                                    return Some(Event::TagEnd);
+                                }
+                                TokenKind::LineComment => {
+                                    // Comment after tag - OK
+                                    match self.context_stack.last() {
+                                        Some(Context::Object { .. }) => {
+                                            self.state = State::EmitEntryEnd;
+                                        }
+                                        Some(Context::Sequence { .. }) => {
+                                            self.state = State::ExpectSeqElem;
+                                        }
+                                        Some(Context::AttrObject) => {
+                                            self.state = State::EmitEntryEnd;
+                                        }
+                                        None => {
+                                            self.state = State::EmitDocumentEnd;
+                                        }
+                                    }
+                                    return Some(Event::TagEnd);
+                                }
+                                _ => {
+                                    // In sequence context, whitespace-separated elements are valid
+                                    if matches!(
+                                        self.context_stack.last(),
+                                        Some(Context::Sequence { .. })
+                                    ) {
+                                        // This is the next sequence element - need to re-process it
+                                        // Store the token info we peeked and emit TagEnd
+                                        self.state = State::ProcessPeekedSeqElem {
+                                            peeked_kind: next.kind,
+                                            peeked_span: next.span,
+                                        };
+                                        return Some(Event::TagEnd);
+                                    }
+
+                                    // TooManyAtoms - another token on the same line
+                                    // Skip to end of line
+                                    loop {
+                                        let skip = self.lexer.next_token();
+                                        match skip.kind {
+                                            TokenKind::Newline | TokenKind::Eof => break,
+                                            TokenKind::RBrace | TokenKind::RParen => break,
+                                            _ => continue,
+                                        }
+                                    }
+                                    self.state = State::EmitEntryEnd;
+                                    return Some(Event::Error {
+                                        span: next.span,
+                                        kind: ParseErrorKind::TooManyAtoms,
+                                    });
+                                }
+                            }
+                        }
+
+                        // Newline or other - tag has no payload (implicit unit)
                         _ => {
                             // Go back to appropriate context
                             match self.context_stack.last() {
                                 Some(Context::Object { .. }) => {
                                     self.state = State::EmitEntryEnd;
                                 }
-                                Some(Context::Sequence) => {
+                                Some(Context::Sequence { .. }) => {
                                     self.state = State::ExpectSeqElem;
                                 }
                                 Some(Context::AttrObject) => {
@@ -1447,7 +2610,7 @@ impl<'src> Parser3<'src> {
                         Some(Context::Object { .. }) => {
                             self.state = State::EmitEntryEnd;
                         }
-                        Some(Context::Sequence) => {
+                        Some(Context::Sequence { .. }) => {
                             self.state = State::ExpectSeqElem;
                         }
                         Some(Context::AttrObject) => {
@@ -1468,16 +2631,28 @@ impl<'src> Parser3<'src> {
 
                 State::EmitTagEndThenSeqEnd { rparen_span } => {
                     // Close sequence after tag
-                    self.context_stack.pop();
-                    self.state = State::EmitEntryEnd;
+                    let is_tag_payload = match self.context_stack.pop() {
+                        Some(Context::Sequence { is_tag_payload }) => is_tag_payload,
+                        _ => false,
+                    };
+                    if self.context_stack.is_empty() {
+                        // This was the root explicit sequence - no outer entry to close
+                        self.state = State::EmitDocumentEnd;
+                    } else if is_tag_payload {
+                        // Sequence was a tag payload - emit TagEnd after
+                        self.state = State::EmitTagEnd;
+                    } else {
+                        // Normal case - close the entry containing the sequence
+                        self.state = State::EmitEntryEnd;
+                    }
                     return Some(Event::SequenceEnd { span: rparen_span });
                 }
 
                 State::EmitTagEndThenObjEnd { rbrace_span } => {
-                    // Close object after tag
-                    self.context_stack.pop();
-                    self.state = State::EmitEntryEnd;
-                    return Some(Event::ObjectEnd { span: rbrace_span });
+                    // After tag ends, we need to close the entry first, then the object
+                    // Sequence: TagEnd (already emitted) -> EntryEnd -> ObjectEnd
+                    self.state = State::EmitObjectEndAfterEntry { rbrace_span };
+                    return Some(Event::EntryEnd);
                 }
 
                 State::EmitAttrObjectStart { main_key_span: _ } => {
@@ -1522,13 +2697,20 @@ impl<'src> Parser3<'src> {
                         TokenKind::LParen => {
                             // Sequence value for attribute - use regular seq handling
                             // When it closes, EmitEntryEnd will see AttrObject context
-                            self.context_stack.push(Context::Sequence);
+                            self.context_stack.push(Context::Sequence {
+                                is_tag_payload: false,
+                            });
                             self.state = State::ExpectSeqElem;
                             return Some(Event::SequenceStart { span: t.span });
                         }
                         TokenKind::LBrace => {
                             // Object value for attribute - use regular obj handling
-                            self.context_stack.push(Context::Object { implicit: false });
+                            self.context_stack.push(Context::Object {
+                                implicit: false,
+                                separator: SeparatorStyle::Unknown,
+                                seen_keys: std::collections::HashMap::new(),
+                                is_tag_payload: false,
+                            });
                             self.state = State::ExpectEntry;
                             return Some(Event::ObjectStart {
                                 span: t.span,
@@ -1718,6 +2900,8 @@ impl<'src> Parser3<'src> {
                     depth,
                 } => {
                     let key_text = self.text_at(key_span);
+                    // Track path - this is the innermost key
+                    self.push_path_segment(key_text);
                     self.state = State::AfterDottedPathKey { full_span, depth };
                     return Some(Event::Key {
                         span: key_span,
@@ -1734,6 +2918,8 @@ impl<'src> Parser3<'src> {
                     depth,
                 } => {
                     let key_text = self.text_at(key_span);
+                    // Track path - intermediate key
+                    self.push_path_segment(key_text);
                     self.state = State::EmitDottedPathObject {
                         key_span,
                         full_span,
@@ -1754,7 +2940,12 @@ impl<'src> Parser3<'src> {
                     next_offset,
                     depth,
                 } => {
-                    self.context_stack.push(Context::Object { implicit: false });
+                    self.context_stack.push(Context::Object {
+                        implicit: false,
+                        separator: SeparatorStyle::Unknown,
+                        seen_keys: std::collections::HashMap::new(),
+                        is_tag_payload: false,
+                    });
                     self.state = State::EmitDottedPath {
                         full_span,
                         offset: next_offset,
@@ -1788,11 +2979,21 @@ impl<'src> Parser3<'src> {
                             continue;
                         }
                         TokenKind::Newline | TokenKind::Eof => {
+                            // Mark the current path as terminal (unit value)
+                            self.mark_path_terminal();
                             self.state = State::CloseDottedPath { depth };
                             return Some(Event::Unit { span: full_span });
                         }
                         TokenKind::LBrace => {
-                            self.context_stack.push(Context::Object { implicit: false });
+                            // Explicit object as value for dotted path
+                            // Store the depth so we can close properly later
+                            self.dotted_depth = depth;
+                            self.context_stack.push(Context::Object {
+                                implicit: false,
+                                separator: SeparatorStyle::Unknown,
+                                seen_keys: std::collections::HashMap::new(),
+                                is_tag_payload: false,
+                            });
                             self.state = State::ExpectEntry;
                             return Some(Event::ObjectStart {
                                 span: t.span,
@@ -1800,7 +3001,11 @@ impl<'src> Parser3<'src> {
                             });
                         }
                         TokenKind::LParen => {
-                            self.context_stack.push(Context::Sequence);
+                            // Sequence as value for dotted path
+                            self.dotted_depth = depth;
+                            self.context_stack.push(Context::Sequence {
+                                is_tag_payload: false,
+                            });
                             self.state = State::ExpectSeqElem;
                             return Some(Event::SequenceStart { span: t.span });
                         }
@@ -1822,7 +3027,8 @@ impl<'src> Parser3<'src> {
                     // Check for `>` immediately after
                     let t = self.lexer.next_token();
                     if t.kind == TokenKind::Gt && t.span.start == value_span.end {
-                        // Attribute chain
+                        // Attribute chain - save depth for closing later
+                        self.dotted_depth = depth;
                         self.context_stack.push(Context::AttrObject);
                         self.state = State::EmitAttrEntryStart {
                             attr_key_span: value_span,
@@ -1832,7 +3038,8 @@ impl<'src> Parser3<'src> {
                             separator: Separator::Comma,
                         });
                     } else {
-                        // Normal scalar value
+                        // Normal scalar value - mark as terminal
+                        self.mark_path_terminal();
                         self.state = State::CloseDottedPath { depth };
                         return Some(Event::Scalar {
                             span: value_span,
@@ -1848,16 +3055,23 @@ impl<'src> Parser3<'src> {
                         ScalarKind::Quoted => self.unescape_quoted(text),
                         _ => Cow::Borrowed(text),
                     };
+                    // Mark the current path as terminal (has a scalar value)
+                    self.mark_path_terminal();
                     self.state = State::CloseDottedPath { depth };
                     return Some(Event::Scalar { span, value, kind });
                 }
 
                 State::CloseDottedPath { depth } => {
                     if depth == 0 {
+                        // Pop the innermost key from path
+                        self.pop_path_segment();
                         self.state = State::EmitEntryEnd;
                         return Some(Event::EntryEnd);
                     } else {
-                        // Close one nested object
+                        // Close one nested IMPLICIT object from dotted path parsing.
+                        // Don't mark as closed - only explicit {} objects get marked closed.
+                        // Just pop the path segment and context.
+                        self.pop_path_segment();
                         self.context_stack.pop();
                         self.state = State::EmitEntryEndThenCloseDotted { depth: depth - 1 };
                         return Some(Event::ObjectEnd {
@@ -1917,7 +3131,12 @@ impl<'src> Parser3<'src> {
                         }
 
                         TokenKind::LBrace => {
-                            self.context_stack.push(Context::Object { implicit: false });
+                            self.context_stack.push(Context::Object {
+                                implicit: false,
+                                separator: SeparatorStyle::Unknown,
+                                seen_keys: std::collections::HashMap::new(),
+                                is_tag_payload: false,
+                            });
                             self.state = State::ExpectEntry;
                             return Some(Event::ObjectStart {
                                 span: t.span,
@@ -1926,7 +3145,9 @@ impl<'src> Parser3<'src> {
                         }
 
                         TokenKind::LParen => {
-                            self.context_stack.push(Context::Sequence);
+                            self.context_stack.push(Context::Sequence {
+                                is_tag_payload: false,
+                            });
                             self.state = State::ExpectSeqElemInAttr;
                             return Some(Event::SequenceStart { span: t.span });
                         }
@@ -2049,7 +3270,12 @@ impl<'src> Parser3<'src> {
 
                     match t.kind {
                         TokenKind::LBrace if t.span.start == tag_span.end => {
-                            self.context_stack.push(Context::Object { implicit: false });
+                            self.context_stack.push(Context::Object {
+                                implicit: false,
+                                separator: SeparatorStyle::Unknown,
+                                seen_keys: std::collections::HashMap::new(),
+                                is_tag_payload: true,
+                            });
                             self.state = State::ExpectEntry;
                             return Some(Event::ObjectStart {
                                 span: t.span,
@@ -2058,7 +3284,9 @@ impl<'src> Parser3<'src> {
                         }
 
                         TokenKind::LParen if t.span.start == tag_span.end => {
-                            self.context_stack.push(Context::Sequence);
+                            self.context_stack.push(Context::Sequence {
+                                is_tag_payload: true,
+                            });
                             self.state = State::ExpectSeqElem;
                             return Some(Event::SequenceStart { span: t.span });
                         }
@@ -2161,8 +3389,15 @@ impl<'src> Parser3<'src> {
 
                         TokenKind::RParen => {
                             // End of sequence
-                            self.context_stack.pop();
-                            self.state = State::EmitEntryEnd;
+                            let is_tag_payload = match self.context_stack.pop() {
+                                Some(Context::Sequence { is_tag_payload }) => is_tag_payload,
+                                _ => false,
+                            };
+                            if is_tag_payload {
+                                self.state = State::EmitTagEnd;
+                            } else {
+                                self.state = State::EmitEntryEnd;
+                            }
                             return Some(Event::SequenceEnd { span: t.span });
                         }
 
@@ -2196,7 +3431,12 @@ impl<'src> Parser3<'src> {
 
                         TokenKind::LBrace => {
                             // Nested object in sequence
-                            self.context_stack.push(Context::Object { implicit: false });
+                            self.context_stack.push(Context::Object {
+                                implicit: false,
+                                separator: SeparatorStyle::Unknown,
+                                seen_keys: std::collections::HashMap::new(),
+                                is_tag_payload: false,
+                            });
                             self.state = State::ExpectEntry;
                             return Some(Event::ObjectStart {
                                 span: t.span,
@@ -2206,7 +3446,9 @@ impl<'src> Parser3<'src> {
 
                         TokenKind::LParen => {
                             // Nested sequence
-                            self.context_stack.push(Context::Sequence);
+                            self.context_stack.push(Context::Sequence {
+                                is_tag_payload: false,
+                            });
                             self.state = State::ExpectSeqElem;
                             return Some(Event::SequenceStart { span: t.span });
                         }
@@ -2220,6 +3462,101 @@ impl<'src> Parser3<'src> {
                         _ => {
                             return Some(Event::Error {
                                 span: t.span,
+                                kind: ParseErrorKind::UnexpectedToken,
+                            });
+                        }
+                    }
+                }
+
+                State::ProcessPeekedSeqElem {
+                    peeked_kind,
+                    peeked_span,
+                } => {
+                    // We already consumed this token while checking for TooManyAtoms,
+                    // but we're in a sequence where multiple elements are valid.
+                    // Process it as a sequence element.
+                    match peeked_kind {
+                        TokenKind::BareScalar => {
+                            self.state = State::ExpectSeqElem;
+                            return Some(Event::Scalar {
+                                span: peeked_span,
+                                value: Cow::Borrowed(self.text_at(peeked_span)),
+                                kind: ScalarKind::Bare,
+                            });
+                        }
+
+                        TokenKind::QuotedScalar => {
+                            self.state = State::ExpectSeqElem;
+                            let text = self.text_at(peeked_span);
+                            return Some(Event::Scalar {
+                                span: peeked_span,
+                                value: self.unescape_quoted(text),
+                                kind: ScalarKind::Quoted,
+                            });
+                        }
+
+                        TokenKind::At => {
+                            // Tag in sequence
+                            let next = self.lexer.next_token();
+                            if next.kind == TokenKind::BareScalar
+                                && next.span.start == peeked_span.end
+                            {
+                                // @TagName - valid tag
+                                let tag_span = Span::new(peeked_span.start, next.span.end);
+                                self.state = State::AfterTagStart { tag_span };
+                                return Some(Event::TagStart {
+                                    span: tag_span,
+                                    name: self.text_at(next.span),
+                                });
+                            } else {
+                                // @ alone is unit
+                                self.state = State::ExpectSeqElem;
+                                return Some(Event::Unit { span: peeked_span });
+                            }
+                        }
+
+                        TokenKind::LBrace => {
+                            // Nested object
+                            self.context_stack.push(Context::Object {
+                                implicit: false,
+                                separator: SeparatorStyle::Unknown,
+                                seen_keys: std::collections::HashMap::new(),
+                                is_tag_payload: false,
+                            });
+                            self.state = State::ExpectEntry;
+                            return Some(Event::ObjectStart {
+                                span: peeked_span,
+                                separator: Separator::Comma,
+                            });
+                        }
+
+                        TokenKind::LParen => {
+                            // Nested sequence
+                            self.context_stack.push(Context::Sequence {
+                                is_tag_payload: false,
+                            });
+                            self.state = State::ExpectSeqElem;
+                            return Some(Event::SequenceStart { span: peeked_span });
+                        }
+
+                        TokenKind::RParen => {
+                            // End of sequence
+                            let is_tag_payload = match self.context_stack.pop() {
+                                Some(Context::Sequence { is_tag_payload }) => is_tag_payload,
+                                _ => false,
+                            };
+                            if is_tag_payload {
+                                self.state = State::EmitTagEnd;
+                            } else {
+                                self.state = State::EmitEntryEnd;
+                            }
+                            return Some(Event::SequenceEnd { span: peeked_span });
+                        }
+
+                        _ => {
+                            self.state = State::ExpectSeqElem;
+                            return Some(Event::Error {
+                                span: peeked_span,
                                 kind: ParseErrorKind::UnexpectedToken,
                             });
                         }

@@ -43,12 +43,10 @@ pub struct ParseResult {
 /// Returns a JSON object with `success` boolean and `diagnostics` array.
 #[wasm_bindgen]
 pub fn parse(source: &str) -> JsValue {
-    let parser = styx_parse::Parser::new(source);
-    let mut events = Vec::new();
-    parser.parse(&mut events);
-
+    let mut parser = styx_parse::Parser2::new(source);
     let mut diagnostics = Vec::new();
-    for event in events {
+
+    while let Some(event) = parser.next_event() {
         if let styx_parse::Event::Error { span, kind } = event {
             diagnostics.push(Diagnostic {
                 message: format_error(&kind),
@@ -204,12 +202,13 @@ fn format_error(kind: &styx_parse::ParseErrorKind) -> String {
 /// Validate a Styx document and return whether it's valid.
 #[wasm_bindgen]
 pub fn validate(source: &str) -> bool {
-    let parser = styx_parse::Parser::new(source);
-    let mut events = Vec::new();
-    parser.parse(&mut events);
-    !events
-        .iter()
-        .any(|e| matches!(e, styx_parse::Event::Error { .. }))
+    let mut parser = styx_parse::Parser2::new(source);
+    while let Some(event) = parser.next_event() {
+        if matches!(event, styx_parse::Event::Error { .. }) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Convert a JSON string to Styx format.

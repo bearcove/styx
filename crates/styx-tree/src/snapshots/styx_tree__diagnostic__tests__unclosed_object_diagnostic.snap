@@ -3,11 +3,11 @@ source: crates/styx-tree/src/diagnostic.rs
 expression: stripped
 ---
 Error: unclosed object
-   ╭─[ test.styx:1:8 ]
+   ╭─[ test.styx:2:17 ]
    │
- 1 │ server {
-   │        ┬  
-   │        ╰── object opened here
+ 2 │   host localhost
+   │                 │ 
+   │                 ╰─ object opened here
    │ 
    │ Help: add a closing '}'
 ───╯
