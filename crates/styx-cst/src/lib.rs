@@ -1,7 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 // Re-export rowan types for convenience
-pub use rowan::{TextRange, TextSize, TokenAtOffset};
+pub use rowan::{NodeOrToken, TextRange, TextSize, TokenAtOffset};
 
 mod syntax_kind;
 pub use syntax_kind::{StyxLanguage, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};

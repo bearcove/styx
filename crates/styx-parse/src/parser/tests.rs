@@ -10,10 +10,6 @@ fn parse(source: &str) -> Vec<Event<'_>> {
     Parser::new(source).parse_to_vec()
 }
 
-fn parse_expr(_source: &str) -> Vec<Event<'_>> {
-    todo!()
-}
-
 fn error_kind_name(kind: &ParseErrorKind) -> &'static str {
     match kind {
         ParseErrorKind::UnexpectedToken => "UnexpectedToken",
@@ -1135,15 +1131,12 @@ fn test_tag_with_seq_containing_tag() {
 }
 
 #[test]
-#[ignore = "TODO: implement parse_expr for parsing values/expressions"]
 fn test_tag_with_typed_literal_in_seq() {
     // This is the format used by schema_gen: @default(true @bool)
     // It's a sequence with two elements: true and @bool (unit tag)
-    let input = "@default(true @bool)";
-    let events = parse_expr(input);
-    for event in &events {
-        eprintln!("{:?}", event);
-    }
+    // We wrap it in an entry to test it as a value
+    let input = "key @default(true @bool)";
+    let events = parse(input);
     let errors: Vec<_> = events
         .iter()
         .filter(|e| matches!(e, Event::Error { .. }))
@@ -1167,61 +1160,19 @@ fn test_schema_with_comma_separated_entries() {
 }
 
 #[test]
-#[ignore = "TODO: implement implicit entry termination on whitespace"]
-fn test_tag_unit_then_object() {
-    // @a @ {} - entry with tag @a, unit value, then second entry with empty object value
-    // This requires the parser to understand that after `@a @`, a new entry starts
-    // because `@` is followed by `{}` which can't be combined with `@a @`.
+fn test_tag_unit_object_is_too_many_atoms() {
+    // @a @ {} is three atoms: @a (tag), @ (unit), {} (object)
+    // An entry can only have key + value (2 atoms max), so this is TooManyAtoms
     let input = "@a @ {}";
     let events = parse(input);
-    for event in &events {
-        eprintln!("{:?}", event);
-    }
+
     let errors: Vec<_> = events
         .iter()
-        .filter(|e| matches!(e, Event::Error { .. }))
+        .filter_map(|e| match e {
+            Event::Error { kind, .. } => Some(kind),
+            _ => None,
+        })
         .collect();
-    assert!(errors.is_empty(), "Unexpected errors: {:?}", errors);
-
-    // Should have two entries
-    let entry_starts: Vec<_> = events
-        .iter()
-        .filter(|e| matches!(e, Event::EntryStart))
-        .collect();
-    assert_eq!(
-        entry_starts.len(),
-        2,
-        "Expected 2 entries, got {:?}",
-        entry_starts.len()
-    );
-}
-
-#[test]
-#[ignore = "TODO: implement implicit entry termination on whitespace"]
-fn test_second_entry_empty_object() {
-    // After first entry with unit value, second entry should be @ with {} value
-    // But we're getting the {} parsed at root level without an entry
-    let input = "@a @ {}";
-    let events = parse(input);
-    for event in &events {
-        eprintln!("{:?}", event);
-    }
-
-    // Check we get EntryStart before ObjectStart
-    let mut saw_entry_before_obj = false;
-    let mut in_second_entry = false;
-    for event in &events {
-        match event {
-            Event::EntryEnd if !in_second_entry => {
-                in_second_entry = true; // First entry ended
-            }
-            Event::EntryStart if in_second_entry => {
-                saw_entry_before_obj = true;
-            }
-            Event::ObjectStart { .. } if in_second_entry && !saw_entry_before_obj => {
-                panic!("ObjectStart came without EntryStart in second entry");
-            }
-            _ => {}
-        }
-    }
+    assert_eq!(errors.len(), 1);
+    assert!(matches!(errors[0], ParseErrorKind::TooManyAtoms));
 }

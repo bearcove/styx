@@ -3,8 +3,9 @@
 //! This formatter works directly with the lossless CST (Concrete Syntax Tree),
 //! preserving all comments and producing properly indented output.
 
-use styx_cst::ast::{AstNode, Document, Entry, Object, Separator, Sequence};
-use styx_cst::{SyntaxKind, SyntaxNode};
+use styx_cst::{
+    AstNode, Document, Entry, NodeOrToken, Object, Separator, Sequence, SyntaxKind, SyntaxNode,
+};
 
 use crate::FormatOptions;
 
@@ -109,6 +110,7 @@ impl CstFormatter {
             | SyntaxKind::COMMA
             | SyntaxKind::GT
             | SyntaxKind::AT
+            | SyntaxKind::TAG_TOKEN
             | SyntaxKind::BARE_SCALAR
             | SyntaxKind::QUOTED_SCALAR
             | SyntaxKind::RAW_SCALAR
@@ -528,7 +530,7 @@ impl CstFormatter {
         // TagPayload must be immediately attached (no whitespace allowed)
         // TagPayload ::= Object | Sequence | QuotedScalar | RawScalar | HeredocScalar | '@'
         for el in node.children_with_tokens() {
-            if let rowan::NodeOrToken::Node(child) = el {
+            if let NodeOrToken::Node(child) = el {
                 match child.kind() {
                     SyntaxKind::TAG_NAME => self.format_tag_name(&child),
                     SyntaxKind::TAG_PAYLOAD => self.format_tag_payload(&child),
@@ -585,12 +587,12 @@ impl CstFormatter {
         // Attribute structure: BARE_SCALAR ">" SCALAR
         for el in node.children_with_tokens() {
             match el {
-                rowan::NodeOrToken::Token(token) => match token.kind() {
+                NodeOrToken::Token(token) => match token.kind() {
                     SyntaxKind::BARE_SCALAR => self.write(token.text()),
                     SyntaxKind::GT => self.write(">"),
                     _ => {}
                 },
-                rowan::NodeOrToken::Node(child) => {
+                NodeOrToken::Node(child) => {
                     self.format_node(&child);
                 }
             }
