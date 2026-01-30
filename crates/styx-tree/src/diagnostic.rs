@@ -257,19 +257,14 @@ mod tests {
     use super::*;
 
     fn parse_with_errors(source: &str) -> Vec<ParseError> {
-        let parser = styx_parse::Parser::new(source);
-        let mut events = Vec::new();
-        parser.parse(&mut events);
-        events
-            .into_iter()
-            .filter_map(|event| {
-                if let styx_parse::Event::Error { span, kind } = event {
-                    Some(ParseError::new(kind, span))
-                } else {
-                    None
-                }
-            })
-            .collect()
+        let mut parser = styx_parse::Parser2::new(source);
+        let mut errors = Vec::new();
+        while let Some(event) = parser.next_event() {
+            if let styx_parse::Event::Error { span, kind } = event {
+                errors.push(ParseError::new(kind, span));
+            }
+        }
+        errors
     }
 
     macro_rules! assert_snapshot_stripped {

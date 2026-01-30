@@ -1337,9 +1337,13 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::Eof | TokenKind::RBrace | TokenKind::RParen => {
-                self.event_queue.push_back(Event::EntryEnd);
+                // EntryEnd must come before ObjectEnd/SequenceEnd
+                // So we queue the boundary result and return EntryEnd directly
                 self.state = State::ExpectEntry;
-                self.handle_boundary_token(t)
+                if let Some(ev) = self.handle_boundary_token(t) {
+                    self.event_queue.push_back(ev);
+                }
+                Some(Event::EntryEnd)
             }
 
             TokenKind::LineComment => {
@@ -2526,8 +2530,8 @@ a b c
     #[test]
     fn test_unit_value() {
         let events = parse("flag @");
-        for e in &events {
-            trace!(?e, "event");
+        for _e in &events {
+            trace!(?_e, "event");
         }
         assert!(events.iter().any(|e| matches!(e, Event::Unit { .. })));
     }
