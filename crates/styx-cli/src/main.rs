@@ -811,7 +811,6 @@ fn strip_schema_declaration(value: &Value) -> Value {
             tag: value.tag.clone(),
             payload: Some(Payload::Object(styx_tree::Object {
                 entries: filtered_entries,
-                separator: obj.separator,
                 span: obj.span,
             })),
             span: value.span,

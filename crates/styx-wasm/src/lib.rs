@@ -329,7 +329,6 @@ fn json_to_value(json: &serde_json::Value) -> Value {
                 tag: None,
                 payload: Some(Payload::Object(Object {
                     entries,
-                    separator: Separator::Newline,
                     span: None,
                 })),
                 span: None,

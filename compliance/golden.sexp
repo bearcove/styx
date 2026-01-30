@@ -2,14 +2,14 @@
 (document [-1, -1]
   (entry
     (scalar [82, 88] bare "server")
-    (object [89, 103] comma
+    (object [89, 103]
       (entry
         (scalar [89, 93] bare "host")
         (scalar [94, 103] bare "localhost"))
     ))
   (entry
     (scalar [128, 134] bare "config")
-    (object [135, 159] comma
+    (object [135, 159]
       (entry
         (scalar [135, 139] bare "host")
         (scalar [140, 149] bare "localhost"))
@@ -19,7 +19,7 @@
     ))
   (entry
     (scalar [202, 207] bare "mixed")
-    (object [208, 260] comma
+    (object [208, 260]
       (entry
         (scalar [208, 212] bare "name")
         (scalar [213, 227] quoted "quoted value"))
@@ -34,7 +34,7 @@
           (scalar [247, 248] bare "c")))
       (entry
         (scalar [250, 254] bare "opts")
-        (object [255, 260] newline
+        (object [255, 260]
           (entry
             (scalar [256, 257] bare "x")
             (scalar [258, 259] bare "1"))
@@ -81,21 +81,21 @@
 (document [-1, -1]
   (entry
     (scalar [35, 41] bare "server")
-    (object [35, 46] newline
+    (object [35, 46]
       (entry
         (scalar [42, 46] bare "host")
         (scalar [47, 56] bare "localhost"))
     ))
   (entry
     (scalar [57, 65] bare "database")
-    (object [57, 70] newline
+    (object [57, 70]
       (entry
         (scalar [66, 70] bare "port")
         (scalar [71, 75] bare "5432"))
     ))
   (entry
     (scalar [76, 81] bare "cache")
-    (object [76, 85] newline
+    (object [76, 85]
       (entry
         (scalar [82, 85] bare "ttl")
         (scalar [86, 90] bare "3600"))
@@ -117,10 +117,10 @@
 (document [-1, -1]
   (entry
     (scalar [44, 47] bare "foo")
-    (object [44, 53] newline
+    (object [44, 53]
       (entry
         (scalar [48, 51] bare "bar")
-        (object [48, 53] newline
+        (object [48, 53]
           (entry
             (scalar [52, 53] bare "x")
             (scalar [54, 60] bare "value1"))
@@ -128,10 +128,10 @@
     ))
   (entry
     (scalar [61, 64] bare "foo")
-    (object [61, 70] newline
+    (object [61, 70]
       (entry
         (scalar [65, 68] bare "bar")
-        (object [65, 70] newline
+        (object [65, 70]
           (entry
             (scalar [69, 70] bare "y")
             (scalar [71, 77] bare "value2"))
@@ -139,7 +139,7 @@
     ))
   (entry
     (scalar [78, 81] bare "foo")
-    (object [78, 85] newline
+    (object [78, 85]
       (entry
         (scalar [82, 85] bare "baz")
         (scalar [86, 92] bare "value3"))
@@ -179,14 +179,14 @@
     (scalar [146, 149] bare "<--"))
   (entry
     (scalar [177, 189] bare "greater-than")
-    (object [190, 197] comma
+    (object [190, 197]
       (entry
         (scalar [190, 193] bare "foo")
         (scalar [194, 197] bare "bar"))
     ))
   (entry
     (scalar [198, 209] bare "both-angles")
-    (object [210, 221] comma
+    (object [210, 221]
       (entry
         (scalar [210, 217] bare "foo<bar")
         (scalar [218, 221] bare "baz"))
@@ -370,7 +370,7 @@
 (document [-1, -1]
   (entry
     (scalar [60, 66] bare "config")
-    (object [67, 159] newline
+    (object [67, 159]
       (entry
         (scalar [73, 79] bare "script")
         (scalar [80, 141] heredoc "        echo \"hello\"\n        echo \"world\""))
@@ -395,7 +395,7 @@
 (document [-1, -1]
   (entry
     (scalar [28, 34] bare "config")
-    (object [35, 87] newline
+    (object [35, 87]
       (entry
         (scalar [41, 47] bare "script")
         (scalar [48, 85] heredoc "echo \"hello\"\necho \"world\""))
@@ -480,7 +480,7 @@
 (document [-1, -1]
   (entry
     (scalar [0, 6] bare "server")
-    (object [7, 34] newline
+    (object [7, 34]
       (entry
         (scalar [8, 12] bare "host")
         (scalar [13, 22] bare "localhost"))
@@ -493,13 +493,13 @@
 (document [-1, -1]
   (entry
     (scalar [0, 3] bare "obj")
-    (object [4, 6] newline))
+    (object [4, 6]))
 )
 ; file: compliance/corpus/02-objects/mixed-separators.styx
 (document [-1, -1]
   (entry
     (scalar [0, 3] bare "obj")
-    (object [4, 20] newline
+    (object [4, 20]
       (entry
         (scalar [10, 11] bare "a")
         (scalar [12, 13] bare "1"))
@@ -512,16 +512,16 @@
 (document [-1, -1]
   (entry
     (scalar [0, 6] bare "config")
-    (object [7, 136] newline
+    (object [7, 136]
       (entry
         (scalar [13, 19] bare "server")
-        (object [20, 134] newline
+        (object [20, 134]
           (entry
             (scalar [30, 34] bare "host")
             (scalar [35, 44] bare "localhost"))
           (entry
             (scalar [53, 56] bare "tls")
-            (object [57, 128] newline
+            (object [57, 128]
               (entry
                 (scalar [71, 78] bare "enabled")
                 (scalar [79, 83] bare "true"))
@@ -536,7 +536,7 @@
 (document [-1, -1]
   (entry
     (scalar [0, 6] bare "server")
-    (object [7, 43] newline
+    (object [7, 43]
       (entry
         (scalar [13, 17] bare "host")
         (scalar [18, 27] bare "localhost"))
@@ -549,14 +549,14 @@
 (document [-1, -1]
   (entry
     (scalar [56, 62] bare "single")
-    (object [63, 68] newline
+    (object [63, 68]
       (entry
         (scalar [64, 65] bare "a")
         (scalar [66, 67] bare "1"))
     ))
   (entry
     (scalar [69, 77] bare "multiple")
-    (object [78, 93] newline
+    (object [78, 93]
       (entry
         (scalar [79, 80] bare "a")
         (scalar [81, 82] bare "1"))
@@ -572,11 +572,11 @@
 (document [-1, -1]
   (entry
     (scalar [0, 6] bare "schema")
-    (object [7, 64] newline
+    (object [7, 64]
       (entry
         (unit [13, 14])
         (tag [22, 36] "object"
-          (object [22, 36] newline
+          (object [22, 36]
             (entry
               (scalar [23, 27] bare "name")
               (tag [28, 35] "string"))
@@ -584,7 +584,7 @@
       (entry
         (scalar [41, 45] bare "User")
         (tag [53, 62] "object"
-          (object [53, 62] newline
+          (object [53, 62]
             (entry
               (scalar [54, 56] bare "id")
               (tag [57, 61] "int"))
@@ -595,17 +595,17 @@
 (document [-1, -1]
   (entry
     (scalar [29, 35] bare "config")
-    (object [36, 92] newline
+    (object [36, 92]
       (entry
         (scalar [42, 48] bare "server")
-        (object [49, 63] comma
+        (object [49, 63]
           (entry
             (scalar [49, 53] bare "host")
             (scalar [54, 63] bare "localhost"))
         ))
       (entry
         (scalar [68, 76] bare "database")
-        (object [77, 90] comma
+        (object [77, 90]
           (entry
             (scalar [77, 81] bare "host")
             (scalar [82, 90] bare "db.local"))
@@ -672,12 +672,12 @@
   (entry
     (scalar [0, 6] bare "routes")
     (sequence [7, 29]
-      (object [8, 16] newline
+      (object [8, 16]
         (entry
           (scalar [9, 13] bare "path")
           (scalar [14, 15] bare "/"))
       )
-      (object [17, 28] newline
+      (object [17, 28]
         (entry
           (scalar [18, 22] bare "path")
           (scalar [23, 27] bare "/api"))
@@ -695,19 +695,19 @@
     (scalar [65, 72] bare "results")
     (sequence [73, 119]
       (tag [77, 86] "ok"
-        (object [77, 86] newline
+        (object [77, 86]
           (entry
             (scalar [78, 83] bare "value")
             (scalar [84, 85] bare "1"))
         ))
       (tag [90, 99] "ok"
-        (object [90, 99] newline
+        (object [90, 99]
           (entry
             (scalar [91, 96] bare "value")
             (scalar [97, 98] bare "2"))
         ))
       (tag [104, 118] "err"
-        (object [104, 118] newline
+        (object [104, 118]
           (entry
             (scalar [105, 108] bare "msg")
             (scalar [109, 117] quoted "failed"))
@@ -733,7 +733,7 @@
   (entry
     (tag [108, 113] "root")
     (tag [121, 135] "object"
-      (object [121, 135] newline
+      (object [121, 135]
         (entry
           (scalar [122, 126] bare "name")
           (tag [127, 134] "string"))
@@ -763,19 +763,19 @@
     (scalar [0, 6] bare "routes")
     (sequence [7, 62]
       (tag [14, 22] "route"
-        (object [14, 22] newline
+        (object [14, 22]
           (entry
             (scalar [15, 19] bare "path")
             (scalar [20, 21] bare "/"))
         ))
       (tag [29, 40] "route"
-        (object [29, 40] newline
+        (object [29, 40]
           (entry
             (scalar [30, 34] bare "path")
             (scalar [35, 39] bare "/api"))
         ))
       (tag [47, 61] "route"
-        (object [47, 61] newline
+        (object [47, 61]
           (entry
             (scalar [48, 52] bare "path")
             (scalar [53, 60] bare "/health"))
@@ -822,7 +822,7 @@
   (entry
     (scalar [0, 6] bare "result")
     (tag [10, 26] "ok"
-      (object [10, 26] newline
+      (object [10, 26]
         (entry
           (scalar [11, 15] bare "data")
           (tag [21, 25] "some"
@@ -843,7 +843,7 @@
   (entry
     (scalar [0, 5] bare "error")
     (tag [12, 38] "error"
-      (object [12, 38] newline
+      (object [12, 38]
         (entry
           (scalar [13, 17] bare "code")
           (scalar [18, 21] bare "500"))
@@ -854,7 +854,7 @@
   (entry
     (scalar [39, 43] bare "user")
     (tag [49, 69] "user"
-      (object [49, 69] newline
+      (object [49, 69]
         (entry
           (scalar [50, 54] bare "name")
           (scalar [55, 60] bare "alice"))
@@ -956,22 +956,22 @@
 (document [-1, -1]
   (entry
     (scalar [0, 1] bare "a")
-    (object [2, 31] newline
+    (object [2, 31]
       (entry
         (scalar [3, 4] bare "b")
-        (object [5, 30] newline
+        (object [5, 30]
           (entry
             (scalar [6, 7] bare "c")
-            (object [8, 29] newline
+            (object [8, 29]
               (entry
                 (scalar [9, 10] bare "d")
-                (object [11, 28] newline
+                (object [11, 28]
                   (entry
                     (scalar [12, 13] bare "e")
-                    (object [14, 27] newline
+                    (object [14, 27]
                       (entry
                         (scalar [15, 16] bare "f")
-                        (object [17, 26] newline
+                        (object [17, 26]
                           (entry
                             (scalar [18, 19] bare "g")
                             (scalar [20, 25] bare "value"))
@@ -1043,7 +1043,7 @@
 (document [-1, -1]
   (entry
     (scalar [0, 3] bare "obj")
-    (object [4, 14] newline
+    (object [4, 14]
       (entry
         (scalar [5, 6] bare "a")
         (scalar [7, 8] bare "1"))
@@ -1086,7 +1086,7 @@
     (scalar [6, 7] bare "d"))
   (entry
     (scalar [8, 9] bare "e")
-    (object [10, 15] newline
+    (object [10, 15]
       (entry
         (scalar [11, 12] bare "f")
         (scalar [13, 14] bare "g"))
@@ -1132,7 +1132,7 @@
   (entry
     (scalar [137, 140] bare "key")
     (tag [145, 147] "tag"
-      (object [145, 147] newline)))
+      (object [145, 147])))
 )
 ; file: compliance/corpus/07-invalid/trailing-after-root.styx
 (error [65, 71] "parse error at 65-71: trailing content after explicit root object")
