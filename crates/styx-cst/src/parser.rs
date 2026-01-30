@@ -4,7 +4,7 @@
 //! all whitespace, comments, and exact source representation.
 
 use rowan::GreenNode;
-use styx_parse::{Token, TokenKind, Tokenizer};
+use styx_tokenizer::{Token, TokenKind, Tokenizer};
 
 use crate::syntax_kind::{SyntaxKind, SyntaxNode};
 

@@ -1,6 +1,6 @@
 //! Syntax node and token kinds for the Styx CST.
 
-use styx_parse::TokenKind;
+use styx_tokenizer::TokenKind;
 
 /// The kind of a syntax element (node or token).
 ///
