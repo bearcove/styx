@@ -54,6 +54,9 @@ enum ParserState {
     /// Haven't emitted DocumentStart yet.
     BeforeDocument,
 
+    /// Expression mode: parse a single value without document wrapper.
+    BeforeExpression,
+
     /// At implicit document root.
     DocumentRoot {
         seen_keys: HashMap<KeyValue, Span>,
@@ -78,6 +81,9 @@ enum ParserState {
 
     /// Document ended.
     AfterDocument,
+
+    /// Expression mode ended.
+    AfterExpression,
 }
 
 impl<'src> Parser<'src> {
@@ -87,6 +93,19 @@ impl<'src> Parser<'src> {
             input: source,
             source: LexemeSource::new(source),
             state: ParserState::BeforeDocument,
+            event_queue: VecDeque::new(),
+        }
+    }
+
+    /// Create a new parser in expression mode.
+    ///
+    /// Expression mode parses a single value rather than a document with implicit root object.
+    /// Use this for parsing embedded values like default values in schemas.
+    pub fn new_expr(source: &'src str) -> Self {
+        Self {
+            input: source,
+            source: LexemeSource::new(source),
+            state: ParserState::BeforeExpression,
             event_queue: VecDeque::new(),
         }
     }
@@ -123,10 +142,35 @@ impl<'src> Parser<'src> {
                     };
                     return Some(Event::DocumentStart);
                 }
-                ParserState::AfterDocument => return None,
+                ParserState::BeforeExpression => {
+                    return self.advance_expression();
+                }
+                ParserState::AfterDocument | ParserState::AfterExpression => return None,
                 ParserState::DocumentRoot { .. } => return self.advance_document_root(),
                 ParserState::InObject { .. } => return self.advance_in_object(),
                 ParserState::InSequence { .. } => return self.advance_in_sequence(),
+            }
+        }
+    }
+
+    /// Advance when in expression mode - parse a single value.
+    fn advance_expression(&mut self) -> Option<Event<'src>> {
+        loop {
+            let lexeme = self.source.next();
+            match lexeme {
+                // Skip whitespace/newlines/comments
+                Lexeme::Newline { .. } | Lexeme::Comment { .. } => continue,
+                Lexeme::Eof => {
+                    self.state = ParserState::AfterExpression;
+                    return None;
+                }
+                _ => {
+                    // Parse a single atom as the value
+                    let atom = self.parse_atom(lexeme);
+                    self.emit_atom_as_value(&atom);
+                    self.state = ParserState::AfterExpression;
+                    return self.event_queue.pop_front();
+                }
             }
         }
     }
@@ -1485,10 +1529,10 @@ fn unescape_quoted(text: &str) -> Cow<'_, str> {
                             }
                             hex.push(chars.next().unwrap());
                         }
-                        if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                            if let Some(ch) = char::from_u32(code) {
-                                result.push(ch);
-                            }
+                        if let Ok(code) = u32::from_str_radix(&hex, 16)
+                            && let Some(ch) = char::from_u32(code)
+                        {
+                            result.push(ch);
                         }
                     }
                     Some(&c) if c.is_ascii_hexdigit() => {
@@ -1502,12 +1546,11 @@ fn unescape_quoted(text: &str) -> Cow<'_, str> {
                                 }
                             }
                         }
-                        if hex.len() == 4 {
-                            if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                                if let Some(ch) = char::from_u32(code) {
-                                    result.push(ch);
-                                }
-                            }
+                        if hex.len() == 4
+                            && let Ok(code) = u32::from_str_radix(&hex, 16)
+                            && let Some(ch) = char::from_u32(code)
+                        {
+                            result.push(ch);
                         }
                     }
                     _ => {}

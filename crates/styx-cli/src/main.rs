@@ -2001,8 +2001,7 @@ other @type{inner value}"#;
         assert!(highlighted.contains(ansi::COMMENT));
         assert!(highlighted.contains(ansi::PROPERTY));
         assert!(highlighted.contains(ansi::STRING));
-        assert!(highlighted.contains(ansi::OPERATOR)); // @ symbol
-        assert!(highlighted.contains(ansi::TYPE)); // type in value position
+        assert!(highlighted.contains(ansi::TYPE)); // @type in value position
     }
 
     #[test]

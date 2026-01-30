@@ -1,6 +1,6 @@
 #![doc = include_str!("../README.md")]
 
-pub use styx_tokenizer::Span;
+pub use styx_tokenizer::{Span, Token, TokenKind, Tokenizer};
 
 mod events;
 pub use events::{Event, ParseErrorKind, ScalarKind, Separator};

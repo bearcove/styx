@@ -43,7 +43,7 @@ pub struct ParseResult {
 /// Returns a JSON object with `success` boolean and `diagnostics` array.
 #[wasm_bindgen]
 pub fn parse(source: &str) -> JsValue {
-    let mut parser = styx_parse::Parser2::new(source);
+    let mut parser = styx_parse::Parser::new(source);
     let mut diagnostics = Vec::new();
 
     while let Some(event) = parser.next_event() {
@@ -168,7 +168,6 @@ fn format_error(kind: &styx_parse::ParseErrorKind) -> String {
     use styx_parse::ParseErrorKind::*;
     match kind {
         DuplicateKey { .. } => "Duplicate key in object".to_string(),
-        MixedSeparators => "Mixed separators: use either commas or newlines, not both".to_string(),
         UnclosedObject => "Unclosed object: missing '}'".to_string(),
         UnclosedSequence => "Unclosed sequence: missing ')'".to_string(),
         InvalidEscape(seq) => format!("Invalid escape sequence: '{}'", seq),
@@ -202,7 +201,7 @@ fn format_error(kind: &styx_parse::ParseErrorKind) -> String {
 /// Validate a Styx document and return whether it's valid.
 #[wasm_bindgen]
 pub fn validate(source: &str) -> bool {
-    let mut parser = styx_parse::Parser2::new(source);
+    let mut parser = styx_parse::Parser::new(source);
     while let Some(event) = parser.next_event() {
         if matches!(event, styx_parse::Event::Error { .. }) {
             return false;

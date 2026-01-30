@@ -14,7 +14,7 @@ use facet_format::{
     ParseEvent, ParseEventKind, SavePoint, ScalarValue,
 };
 use facet_reflect::Span as ReflectSpan;
-use styx_parse::{Event, ParseErrorKind, ScalarKind as StyxScalarKind, Span, parser3::Parser3};
+use styx_parse::{Event, ParseErrorKind, Parser, ScalarKind as StyxScalarKind, Span};
 
 /// Streaming Styx parser implementing FormatParser.
 ///
@@ -28,7 +28,7 @@ use styx_parse::{Event, ParseErrorKind, ScalarKind as StyxScalarKind, Span, pars
 #[derive(Clone)]
 pub struct StyxParser<'de> {
     input: &'de str,
-    inner: Parser3<'de>,
+    inner: Parser<'de>,
     /// Peeked events queue (if any).
     peeked_events: Vec<ParseEvent<'de>>,
     /// Current span for error reporting.
@@ -54,7 +54,7 @@ impl<'de> StyxParser<'de> {
     pub fn new(source: &'de str) -> Self {
         Self {
             input: source,
-            inner: Parser3::new(source),
+            inner: Parser::new(source),
             peeked_events: Vec::new(),
             current_span: None,
             complete: false,
@@ -73,7 +73,7 @@ impl<'de> StyxParser<'de> {
     pub fn new_expr(source: &'de str) -> Self {
         Self {
             input: source,
-            inner: Parser3::new_expr(source),
+            inner: Parser::new_expr(source),
             peeked_events: Vec::new(),
             current_span: None,
             complete: false,
@@ -162,7 +162,7 @@ impl<'de> StyxParser<'de> {
         match event {
             Event::DocumentStart => {
                 if self.at_implicit_root {
-                    // Parser3 no longer emits ObjectStart for implicit root,
+                    // Parser no longer emits ObjectStart for implicit root,
                     // so we synthesize StructStart here for the implicit root object.
                     self.depth += 1;
                     Ok(Some(
@@ -176,7 +176,7 @@ impl<'de> StyxParser<'de> {
 
             Event::DocumentEnd => {
                 if self.at_implicit_root {
-                    // Parser3 no longer emits ObjectEnd for implicit root,
+                    // Parser no longer emits ObjectEnd for implicit root,
                     // so we synthesize StructEnd here for the implicit root object.
                     self.depth -= 1;
                     if self.depth == 0 {
