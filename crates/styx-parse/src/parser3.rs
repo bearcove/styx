@@ -88,17 +88,60 @@ enum State {
     /// We saw `key>` - emit ObjectStart for attribute object.
     EmitAttrObjectStart { main_key_span: Span },
 
-    /// Inside attribute object, expecting attribute key.
-    ExpectAttrKey,
+    /// Emit EntryStart for attribute.
+    EmitAttrEntryStart { attr_key_span: Span },
 
-    /// After seeing attribute key, check for `>` or value.
-    AfterAttrKey { attr_key_span: Span },
+    /// Emit Key for attribute.
+    EmitAttrKey { attr_key_span: Span },
 
-    /// After attribute value, check for more attributes or close.
-    AfterAttrValue,
+    /// After emitting attr key, read the value.
+    ExpectAttrValue { attr_key_span: Span },
+
+    /// We have a bare scalar that might be attr value or next attr key.
+    /// Don't emit yet - check for `>`.
+    AfterAttrBareValue { value_span: Span },
+
+    /// Emit scalar value for attribute, then check for more.
+    EmitAttrScalarValue { span: Span, kind: ScalarKind },
+
+    /// After attr value emitted, emit EntryEnd then check for more attrs.
+    EmitAttrEntryEnd,
+
+    /// After attr EntryEnd, check for more `>` or close.
+    AfterAttrEntryEnd,
+
+    /// Inside sequence that is an attribute value. After close, check for more attrs.
+    ExpectSeqElemInAttr,
+
+    /// Emit SequenceEnd for attr value, then check for more attrs.
+    EmitSeqEndInAttr { rparen_span: Span },
+
+    /// Inside object that is an attribute value. After close, check for more attrs.
+    ExpectEntryInAttr,
+
+    /// Emit ObjectEnd for attr value, then check for more attrs.
+    EmitObjEndInAttr { rbrace_span: Span },
 
     /// Close the attribute object.
     EmitAttrObjectEnd,
+
+    /// Close attr object, then emit EntryEnd, then start new entry.
+    EmitAttrObjectEndThenNewEntry {
+        next_key_span: Span,
+        next_key_kind: ScalarKind,
+    },
+
+    /// After attr object closed, emit EntryEnd then new EntryStart.
+    EmitEntryEndThenNewEntry {
+        next_key_span: Span,
+        next_key_kind: ScalarKind,
+    },
+
+    /// Close attr object, then close parent object.
+    EmitAttrObjectEndThenClose { rbrace_span: Span },
+
+    /// After attr object closed, close parent object.
+    EmitParentObjectEnd { rbrace_span: Span },
 
     /// Emit DocumentEnd, then Done.
     EmitDocumentEnd,
@@ -114,6 +157,8 @@ enum Context {
     Object { implicit: bool },
     /// Inside a sequence.
     Sequence,
+    /// Inside an attribute object (the `{...}` that holds attr key-value pairs).
+    AttrObject,
 }
 
 #[derive(Clone)]
@@ -358,8 +403,8 @@ impl<'src> Parser3<'src> {
 
                     match t.kind {
                         TokenKind::BareScalar => {
-                            // Bare scalars need special handling - might be attribute chain
-                            self.state = State::EmitBareScalarValue { span: t.span };
+                            // Don't emit yet - check for `>` first
+                            self.state = State::AfterBareScalarValue { value_span: t.span };
                             return Some(Event::Key {
                                 span: key_span,
                                 tag: None,
@@ -456,8 +501,8 @@ impl<'src> Parser3<'src> {
                 }
 
                 State::EmitBareScalarValue { span } => {
-                    // Emit the scalar, then check for `>`
-                    self.state = State::AfterBareScalarValue { value_span: span };
+                    // Just emit the scalar - we know it's a value
+                    self.state = State::EmitEntryEnd;
                     return Some(Event::Scalar {
                         span,
                         value: Cow::Borrowed(self.text_at(span)),
@@ -466,15 +511,17 @@ impl<'src> Parser3<'src> {
                 }
 
                 State::AfterBareScalarValue { value_span } => {
-                    // Check if next token is `>` (attribute chain)
+                    // We have a pending bare scalar (not yet emitted). Check for `>`.
                     let t = self.lexer.next_token();
 
                     match t.kind {
                         TokenKind::Gt if t.span.start == value_span.end => {
-                            // Attribute chain! The scalar we just emitted is actually an attr key.
-                            // Emit ObjectStart to nest, then handle the attribute.
-                            self.context_stack.push(Context::Object { implicit: false });
-                            self.state = State::ExpectAttrKey;
+                            // Attribute! Pending scalar is attr key, not value.
+                            // Emit ObjectStart, then handle attr entry.
+                            self.context_stack.push(Context::AttrObject);
+                            self.state = State::EmitAttrEntryStart {
+                                attr_key_span: value_span,
+                            };
                             return Some(Event::ObjectStart {
                                 span: value_span,
                                 separator: Separator::Comma,
@@ -485,44 +532,15 @@ impl<'src> Parser3<'src> {
                         | TokenKind::Eof
                         | TokenKind::RBrace
                         | TokenKind::RParen
-                        | TokenKind::Comma => {
-                            // Normal end of entry
+                        | TokenKind::Comma
+                        | TokenKind::Whitespace => {
+                            // Normal value - emit scalar now
                             self.state = State::EmitEntryEnd;
-                            continue;
-                        }
-
-                        TokenKind::Whitespace => {
-                            // Whitespace after value - check what comes next
-                            let next = self.next_token_skip_ws();
-                            match next.kind {
-                                TokenKind::BareScalar => {
-                                    // Another bare scalar - could be more attributes
-                                    // `server host>localhost port>8080`
-                                    // After `localhost`, we see whitespace, then `port`
-                                    // But `port` starts a new attribute!
-                                    // Actually, let's check if it's followed by `>`
-                                    self.state = State::AfterBareScalarValue {
-                                        value_span: next.span,
-                                    };
-                                    return Some(Event::Scalar {
-                                        span: next.span,
-                                        value: Cow::Borrowed(self.text_at(next.span)),
-                                        kind: ScalarKind::Bare,
-                                    });
-                                }
-                                TokenKind::Newline
-                                | TokenKind::Eof
-                                | TokenKind::RBrace
-                                | TokenKind::RParen
-                                | TokenKind::Comma => {
-                                    self.state = State::EmitEntryEnd;
-                                    continue;
-                                }
-                                _ => {
-                                    self.state = State::EmitEntryEnd;
-                                    continue;
-                                }
-                            }
+                            return Some(Event::Scalar {
+                                span: value_span,
+                                value: Cow::Borrowed(self.text_at(value_span)),
+                                kind: ScalarKind::Bare,
+                            });
                         }
 
                         _ => {
@@ -549,6 +567,9 @@ impl<'src> Parser3<'src> {
                         }
                         Some(Context::Sequence) => {
                             self.state = State::ExpectSeqElem;
+                        }
+                        Some(Context::AttrObject) => {
+                            self.state = State::AfterAttrEntryEnd;
                         }
                         None => {
                             self.state = State::EmitDocumentEnd;
@@ -692,6 +713,9 @@ impl<'src> Parser3<'src> {
                                 Some(Context::Sequence) => {
                                     self.state = State::ExpectSeqElem;
                                 }
+                                Some(Context::AttrObject) => {
+                                    self.state = State::EmitEntryEnd;
+                                }
                                 None => {
                                     self.state = State::EmitDocumentEnd;
                                 }
@@ -709,6 +733,9 @@ impl<'src> Parser3<'src> {
                         }
                         Some(Context::Sequence) => {
                             self.state = State::ExpectSeqElem;
+                        }
+                        Some(Context::AttrObject) => {
+                            self.state = State::EmitEntryEnd;
                         }
                         None => {
                             self.state = State::EmitDocumentEnd;
@@ -738,20 +765,59 @@ impl<'src> Parser3<'src> {
                 }
 
                 State::EmitAttrObjectStart { main_key_span: _ } => {
-                    // Attribute object already pushed in AfterBareScalarValue
-                    self.state = State::ExpectAttrKey;
-                    continue;
+                    // This state is unused - we go directly to EmitAttrEntryStart
+                    unreachable!("EmitAttrObjectStart should not be reached");
                 }
 
-                State::ExpectAttrKey => {
-                    // Read the attribute key (immediately after `>`)
+                State::EmitAttrEntryStart { attr_key_span } => {
+                    // Emit EntryStart, then Key
+                    self.state = State::EmitAttrKey { attr_key_span };
+                    return Some(Event::EntryStart);
+                }
+
+                State::EmitAttrKey { attr_key_span } => {
+                    // Emit Key, then expect value
+                    let key_text = self.text_at(attr_key_span);
+                    self.state = State::ExpectAttrValue { attr_key_span };
+                    return Some(Event::Key {
+                        span: attr_key_span,
+                        tag: None,
+                        payload: Some(Cow::Borrowed(key_text)),
+                        kind: ScalarKind::Bare,
+                    });
+                }
+
+                State::ExpectAttrValue { attr_key_span: _ } => {
+                    // Read the attribute value
                     let t = self.lexer.next_token();
                     match t.kind {
                         TokenKind::BareScalar => {
-                            self.state = State::AfterAttrKey {
-                                attr_key_span: t.span,
+                            // Don't emit yet - check for `>`
+                            self.state = State::AfterAttrBareValue { value_span: t.span };
+                            continue;
+                        }
+                        TokenKind::QuotedScalar => {
+                            self.state = State::EmitAttrScalarValue {
+                                span: t.span,
+                                kind: ScalarKind::Quoted,
                             };
-                            return Some(Event::EntryStart);
+                            continue;
+                        }
+                        TokenKind::LParen => {
+                            // Sequence value for attribute - use regular seq handling
+                            // When it closes, EmitEntryEnd will see AttrObject context
+                            self.context_stack.push(Context::Sequence);
+                            self.state = State::ExpectSeqElem;
+                            return Some(Event::SequenceStart { span: t.span });
+                        }
+                        TokenKind::LBrace => {
+                            // Object value for attribute - use regular obj handling
+                            self.context_stack.push(Context::Object { implicit: false });
+                            self.state = State::ExpectEntry;
+                            return Some(Event::ObjectStart {
+                                span: t.span,
+                                separator: Separator::Comma,
+                            });
                         }
                         _ => {
                             self.state = State::EmitAttrObjectEnd;
@@ -763,25 +829,214 @@ impl<'src> Parser3<'src> {
                     }
                 }
 
-                State::AfterAttrKey { attr_key_span } => {
-                    // Emit the Key, then read the value
-                    let key_text = self.text_at(attr_key_span);
-                    self.state = State::AfterAttrValue;
-                    return Some(Event::Key {
-                        span: attr_key_span,
-                        tag: None,
-                        payload: Some(Cow::Borrowed(key_text)),
-                        kind: ScalarKind::Bare,
-                    });
+                State::AfterAttrBareValue { value_span } => {
+                    // Check for `>` immediately after
+                    let t = self.lexer.next_token();
+                    match t.kind {
+                        TokenKind::Gt if t.span.start == value_span.end => {
+                            // This is another attribute key! Emit value, close entry, start new.
+                            // But wait - we need to emit the PREVIOUS value first.
+                            // value_span is actually the NEXT attr key, not a value.
+                            // We need to emit Unit for the previous attr, then start new entry.
+                            self.state = State::EmitAttrEntryStart {
+                                attr_key_span: value_span,
+                            };
+                            return Some(Event::Unit { span: value_span });
+                        }
+                        _ => {
+                            // Normal value - emit it
+                            self.state = State::EmitAttrEntryEnd;
+                            return Some(Event::Scalar {
+                                span: value_span,
+                                value: Cow::Borrowed(self.text_at(value_span)),
+                                kind: ScalarKind::Bare,
+                            });
+                        }
+                    }
                 }
 
-                State::AfterAttrValue => {
-                    // We need to close the attribute object
+                State::EmitAttrScalarValue { span, kind } => {
+                    let text = self.text_at(span);
+                    let value = match kind {
+                        ScalarKind::Quoted => self.unescape_quoted(text),
+                        _ => Cow::Borrowed(text),
+                    };
+                    self.state = State::EmitAttrEntryEnd;
+                    return Some(Event::Scalar { span, value, kind });
+                }
+
+                State::EmitAttrEntryEnd => {
+                    self.state = State::AfterAttrEntryEnd;
+                    return Some(Event::EntryEnd);
+                }
+
+                State::AfterAttrEntryEnd => {
+                    // Check for more attributes or close.
+                    // Attributes look like: key1>val1 key2>val2
+                    // So we need to see: whitespace, then bare scalar, then `>`.
+                    let t = self.next_token_skip_ws();
+                    match t.kind {
+                        TokenKind::BareScalar => {
+                            // Could be another attr key - check for `>`
+                            let next = self.lexer.next_token();
+                            if next.kind == TokenKind::Gt && next.span.start == t.span.end {
+                                // Yes, another attribute!
+                                self.state = State::EmitAttrEntryStart {
+                                    attr_key_span: t.span,
+                                };
+                                continue;
+                            } else {
+                                // Not an attribute - close attr object, this is next entry
+                                // But we consumed the token! Need to handle it.
+                                // This bare scalar is the NEXT key in the parent object.
+                                // We need to close attr object, close current entry,
+                                // then start a new entry with this key.
+                                // Store the key info in state.
+                                self.state = State::EmitAttrObjectEndThenNewEntry {
+                                    next_key_span: t.span,
+                                    next_key_kind: ScalarKind::Bare,
+                                };
+                                continue;
+                            }
+                        }
+                        TokenKind::Newline | TokenKind::Eof => {
+                            // Done with attributes
+                            self.state = State::EmitAttrObjectEnd;
+                            continue;
+                        }
+                        TokenKind::RBrace => {
+                            // Close attr object, then close parent object
+                            self.state = State::EmitAttrObjectEndThenClose {
+                                rbrace_span: t.span,
+                            };
+                            continue;
+                        }
+                        _ => {
+                            self.state = State::EmitAttrObjectEnd;
+                            return Some(Event::Error {
+                                span: t.span,
+                                kind: ParseErrorKind::UnexpectedToken,
+                            });
+                        }
+                    }
+                }
+
+                State::ExpectSeqElemInAttr => {
+                    let t = self.next_token_skip_ws_nl();
+
+                    match t.kind {
+                        TokenKind::RParen => {
+                            // End of sequence - go back to attr checking
+                            self.context_stack.pop();
+                            self.state = State::AfterAttrEntryEnd;
+                            return Some(Event::SequenceEnd { span: t.span });
+                        }
+
+                        TokenKind::Eof => {
+                            return Some(Event::Error {
+                                span: self.eof_span(),
+                                kind: ParseErrorKind::UnclosedSequence,
+                            });
+                        }
+
+                        TokenKind::BareScalar => {
+                            self.state = State::ExpectSeqElemInAttr;
+                            return Some(Event::Scalar {
+                                span: t.span,
+                                value: Cow::Borrowed(self.text_at(t.span)),
+                                kind: ScalarKind::Bare,
+                            });
+                        }
+
+                        TokenKind::QuotedScalar => {
+                            self.state = State::ExpectSeqElemInAttr;
+                            let text = self.text_at(t.span);
+                            return Some(Event::Scalar {
+                                span: t.span,
+                                value: self.unescape_quoted(text),
+                                kind: ScalarKind::Quoted,
+                            });
+                        }
+
+                        TokenKind::LBrace => {
+                            self.context_stack.push(Context::Object { implicit: false });
+                            self.state = State::ExpectEntry;
+                            return Some(Event::ObjectStart {
+                                span: t.span,
+                                separator: Separator::Comma,
+                            });
+                        }
+
+                        TokenKind::LParen => {
+                            self.context_stack.push(Context::Sequence);
+                            self.state = State::ExpectSeqElemInAttr;
+                            return Some(Event::SequenceStart { span: t.span });
+                        }
+
+                        _ => {
+                            return Some(Event::Error {
+                                span: t.span,
+                                kind: ParseErrorKind::UnexpectedToken,
+                            });
+                        }
+                    }
+                }
+
+                State::EmitSeqEndInAttr { rparen_span } => {
                     self.context_stack.pop();
-                    self.state = State::EmitEntryEnd;
-                    return Some(Event::ObjectEnd {
-                        span: self.eof_span(),
-                    });
+                    self.state = State::AfterAttrEntryEnd;
+                    return Some(Event::SequenceEnd { span: rparen_span });
+                }
+
+                State::ExpectEntryInAttr => {
+                    let t = self.next_token_skip_ws_nl();
+
+                    match t.kind {
+                        TokenKind::RBrace => {
+                            // End of object - go back to attr checking
+                            self.context_stack.pop();
+                            self.state = State::AfterAttrEntryEnd;
+                            return Some(Event::ObjectEnd { span: t.span });
+                        }
+
+                        TokenKind::Eof => {
+                            return Some(Event::Error {
+                                span: self.eof_span(),
+                                kind: ParseErrorKind::UnclosedObject,
+                            });
+                        }
+
+                        TokenKind::BareScalar => {
+                            // Normal entry in a nested object - use regular entry flow
+                            // The close will be handled by ExpectEntry seeing RBrace
+                            self.state = State::EmitEntryStart {
+                                key_span: t.span,
+                                key_kind: ScalarKind::Bare,
+                            };
+                            continue;
+                        }
+
+                        TokenKind::QuotedScalar => {
+                            self.state = State::EmitEntryStart {
+                                key_span: t.span,
+                                key_kind: ScalarKind::Quoted,
+                            };
+                            continue;
+                        }
+
+                        _ => {
+                            return Some(Event::Error {
+                                span: t.span,
+                                kind: ParseErrorKind::UnexpectedToken,
+                            });
+                        }
+                    }
+                }
+
+                State::EmitObjEndInAttr { rbrace_span } => {
+                    self.context_stack.pop();
+                    self.state = State::AfterAttrEntryEnd;
+                    return Some(Event::ObjectEnd { span: rbrace_span });
                 }
 
                 State::EmitAttrObjectEnd => {
@@ -790,6 +1045,45 @@ impl<'src> Parser3<'src> {
                     return Some(Event::ObjectEnd {
                         span: self.eof_span(),
                     });
+                }
+
+                State::EmitAttrObjectEndThenNewEntry {
+                    next_key_span,
+                    next_key_kind,
+                } => {
+                    self.context_stack.pop();
+                    self.state = State::EmitEntryEndThenNewEntry {
+                        next_key_span,
+                        next_key_kind,
+                    };
+                    return Some(Event::ObjectEnd {
+                        span: self.eof_span(),
+                    });
+                }
+
+                State::EmitEntryEndThenNewEntry {
+                    next_key_span,
+                    next_key_kind,
+                } => {
+                    self.state = State::EmitEntryStart {
+                        key_span: next_key_span,
+                        key_kind: next_key_kind,
+                    };
+                    return Some(Event::EntryEnd);
+                }
+
+                State::EmitAttrObjectEndThenClose { rbrace_span } => {
+                    self.context_stack.pop();
+                    self.state = State::EmitParentObjectEnd { rbrace_span };
+                    return Some(Event::ObjectEnd {
+                        span: self.eof_span(),
+                    });
+                }
+
+                State::EmitParentObjectEnd { rbrace_span } => {
+                    self.context_stack.pop();
+                    self.state = State::EmitEntryEnd;
+                    return Some(Event::ObjectEnd { span: rbrace_span });
                 }
 
                 State::ExpectSeqElem => {
