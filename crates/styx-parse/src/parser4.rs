@@ -1,9 +1,4 @@
-use std::borrow::Cow;
-
-use crate::event::{Event, ParseErrorKind, ScalarKind, Separator};
-use crate::lexer::Lexer;
-use crate::span::Span;
-use crate::token::TokenKind;
+use crate::event::Event;
 
 #[allow(unused_imports)]
 use crate::trace;
