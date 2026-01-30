@@ -290,8 +290,15 @@ impl<'src> Lexer<'src> {
                 let start_span = tok.span;
                 let mut content = String::new();
                 let end_span;
+                let mut closing_indent = 0usize;
 
                 loop {
+                    // Check for closing indent before consuming content token
+                    // (it's set after HeredocContent is produced, before HeredocEnd)
+                    if let Some(indent) = self.tokenizer.heredoc_closing_indent() {
+                        closing_indent = indent;
+                    }
+
                     let next = self.next_token();
                     match next.kind {
                         TokenKind::HeredocContent => {
@@ -316,12 +323,9 @@ impl<'src> Lexer<'src> {
                     }
                 }
 
-                // Strip trailing newline if present
-                if content.ends_with('\n') {
-                    content.pop();
-                    if content.ends_with('\r') {
-                        content.pop();
-                    }
+                // Apply dedent if closing delimiter was indented
+                if closing_indent > 0 {
+                    content = dedent_heredoc(&content, closing_indent);
                 }
 
                 Lexeme::Scalar {
@@ -363,6 +367,36 @@ impl<'src> Iterator for Lexer<'src> {
             Some(lexeme)
         }
     }
+}
+
+/// Strip up to `indent_len` whitespace characters from the start of each line.
+fn dedent_heredoc(content: &str, indent_len: usize) -> String {
+    let mut result = String::with_capacity(content.len());
+    for (i, line) in content.split('\n').enumerate() {
+        if i > 0 {
+            result.push('\n');
+        }
+        // Strip up to indent_len whitespace chars from start of line
+        let mut stripped = 0;
+        let mut char_indices = line.char_indices().peekable();
+        while stripped < indent_len {
+            if let Some(&(_, ch)) = char_indices.peek() {
+                if ch == ' ' || ch == '\t' {
+                    char_indices.next();
+                    stripped += 1;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        // Append the rest of the line
+        if let Some(&(idx, _)) = char_indices.peek() {
+            result.push_str(&line[idx..]);
+        }
+    }
+    result
 }
 
 /// Process escape sequences in a quoted string.
@@ -433,6 +467,14 @@ fn process_escapes(s: &str) -> Result<Cow<'_, str>, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_process_escapes_double_backslash() {
+        // Input: path\\to\\file (two backslash pairs)
+        // Expected: path\to\file (two literal backslashes)
+        let result = process_escapes(r"path\\to\\file").unwrap();
+        assert_eq!(result, r"path\to\file");
+    }
 
     fn lex(source: &str) -> Vec<Lexeme<'_>> {
         Lexer::new(source).collect()

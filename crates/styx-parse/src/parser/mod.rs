@@ -1017,12 +1017,11 @@ impl<'src> Parser<'src> {
     fn emit_atom_as_key(&mut self, atom: &Atom<'src>) {
         match &atom.content {
             AtomContent::Scalar { value, kind } => {
-                // Note: escape validation is NOT done here because the lexer already
-                // processed valid escapes. Invalid escapes are handled via InvalidEscapeScalar.
+                // The lexer already processed escape sequences.
                 self.event_queue.push_back(Event::Key {
                     span: atom.span,
                     tag: None,
-                    payload: Some(process_scalar(value.clone(), *kind)),
+                    payload: Some(value.clone()),
                     kind: *kind,
                 });
             }
@@ -1063,7 +1062,7 @@ impl<'src> Parser<'src> {
                             self.event_queue.push_back(Event::Key {
                                 span: atom.span,
                                 tag: Some(name),
-                                payload: Some(process_scalar(value.clone(), *kind)),
+                                payload: Some(value.clone()),
                                 kind: *kind,
                             });
                         }
@@ -1127,11 +1126,10 @@ impl<'src> Parser<'src> {
     fn emit_atom_as_value(&mut self, atom: &Atom<'src>) {
         match &atom.content {
             AtomContent::Scalar { value, kind } => {
-                // Note: escape validation is NOT done here because the lexer already
-                // processed valid escapes. Invalid escapes are handled via InvalidEscapeScalar.
+                // The lexer already processed escape sequences.
                 self.event_queue.push_back(Event::Scalar {
                     span: atom.span,
-                    value: process_scalar(value.clone(), *kind),
+                    value: value.clone(),
                     kind: *kind,
                 });
             }
@@ -1389,9 +1387,7 @@ enum KeyValue {
 impl KeyValue {
     fn from_atom(atom: &Atom<'_>) -> Self {
         match &atom.content {
-            AtomContent::Scalar { value, kind } => {
-                KeyValue::Scalar(process_scalar(value.clone(), *kind).into_owned())
-            }
+            AtomContent::Scalar { value, .. } => KeyValue::Scalar(value.to_string()),
             AtomContent::Unit => KeyValue::Unit,
             AtomContent::Tag { name, payload, .. } => KeyValue::Tagged {
                 name: (*name).to_string(),
@@ -1401,7 +1397,8 @@ impl KeyValue {
             AtomContent::Sequence { .. } => KeyValue::Scalar("()".into()),
             AtomContent::Attributes(_) => KeyValue::Scalar("{}".into()),
             AtomContent::InvalidEscapeScalar { raw_inner } => {
-                KeyValue::Scalar(unescape_quoted(raw_inner).into_owned())
+                // This is raw text that failed escape processing - just use it as-is
+                KeyValue::Scalar(raw_inner.to_string())
             }
             AtomContent::Error { .. } => KeyValue::Scalar("<error>".into()),
         }
@@ -1507,13 +1504,6 @@ fn is_valid_tag_name(name: &str) -> bool {
         _ => return false,
     }
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-}
-
-fn process_scalar(value: Cow<'_, str>, kind: ScalarKind) -> Cow<'static, str> {
-    match kind {
-        ScalarKind::Bare | ScalarKind::Raw | ScalarKind::Heredoc => Cow::Owned(value.into_owned()),
-        ScalarKind::Quoted => Cow::Owned(unescape_quoted(&value).into_owned()),
-    }
 }
 
 fn unescape_quoted(text: &str) -> Cow<'_, str> {

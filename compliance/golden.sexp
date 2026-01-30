@@ -373,7 +373,7 @@
     (object [67, 159]
       (entry
         (scalar [73, 79] bare "script")
-        (scalar [80, 141] heredoc "        echo \"hello\"\n        echo \"world\""))
+        (scalar [80, 141] heredoc "echo \"hello\"\necho \"world\"\n"))
       (entry
         (scalar [146, 151] bare "other")
         (scalar [152, 157] bare "value"))
@@ -383,7 +383,7 @@
 (document [-1, -1]
   (entry
     (scalar [80, 83] bare "key")
-    (scalar [84, 117] heredoc "  line one\n  line two"))
+    (scalar [84, 117] heredoc "line one\nline two\n"))
 )
 ; file: compliance/corpus/01-scalars/heredoc-empty.styx
 (document [-1, -1]
@@ -398,20 +398,20 @@
     (object [35, 87]
       (entry
         (scalar [41, 47] bare "script")
-        (scalar [48, 85] heredoc "echo \"hello\"\necho \"world\""))
+        (scalar [48, 85] heredoc "echo \"hello\"\necho \"world\"\n"))
     ))
 )
 ; file: compliance/corpus/01-scalars/heredoc-lang-hint.styx
 (document [-1, -1]
   (entry
     (scalar [0, 4] bare "code")
-    (scalar [5, 59] heredoc "fn main() {\n    println!(\"Hello!\");\n}"))
+    (scalar [5, 59] heredoc "fn main() {\n    println!(\"Hello!\");\n}\n"))
 )
 ; file: compliance/corpus/01-scalars/heredoc-simple.styx
 (document [-1, -1]
   (entry
     (scalar [0, 4] bare "text")
-    (scalar [5, 57] heredoc "Hello, world!\nThis is a multi-line string."))
+    (scalar [5, 57] heredoc "Hello, world!\nThis is a multi-line string.\n"))
 )
 ; file: compliance/corpus/01-scalars/quoted-escapes.styx
 (document [-1, -1]
@@ -429,7 +429,7 @@
     (scalar [72, 87] quoted "say \"hello\""))
   (entry
     (scalar [88, 97] bare "backslash")
-    (scalar [98, 114] quoted "path\to\\file"))
+    (scalar [98, 114] quoted "path\\to\\file"))
 )
 ; file: compliance/corpus/01-scalars/quoted-simple.styx
 (document [-1, -1]

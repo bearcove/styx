@@ -22,6 +22,9 @@ pub struct Tokenizer<'src> {
 struct HeredocState {
     /// The delimiter to match (e.g., "EOF" for `<<EOF`)
     delimiter: String,
+    /// Indentation of the closing delimiter (set when found).
+    /// This is the number of spaces/tabs before the closing delimiter.
+    closing_indent: Option<usize>,
 }
 
 impl<'src> Tokenizer<'src> {
@@ -45,6 +48,14 @@ impl<'src> Tokenizer<'src> {
     #[inline]
     pub fn is_eof(&self) -> bool {
         self.remaining.is_empty()
+    }
+
+    /// Get the closing indent for the current heredoc (if any).
+    /// This is set after parsing heredoc content, before returning HeredocEnd.
+    /// Used by the lexer to apply dedent to heredoc content.
+    #[inline]
+    pub fn heredoc_closing_indent(&self) -> Option<usize> {
+        self.heredoc_state.as_ref().and_then(|s| s.closing_indent)
     }
 
     /// Peek at the next character without consuming it.
@@ -402,6 +413,7 @@ impl<'src> Tokenizer<'src> {
         // Set state for heredoc content
         self.heredoc_state = Some(HeredocState {
             delimiter: delimiter.to_string(),
+            closing_indent: None,
         });
 
         self.token(TokenKind::HeredocStart, start)
@@ -446,6 +458,7 @@ impl<'src> Tokenizer<'src> {
 
         // Consume content until we find the delimiter at start of a line (possibly indented)
         let mut found_end = false;
+        let mut closing_indent = 0usize;
         while !self.is_eof() {
             // Consume the current line
             while let Some(c) = self.peek() {
@@ -461,8 +474,9 @@ impl<'src> Tokenizer<'src> {
             }
 
             // Check if next line starts with delimiter (possibly indented)
-            if self.find_heredoc_delimiter(delimiter).is_some() {
+            if let Some(indent_len) = self.find_heredoc_delimiter(delimiter) {
                 found_end = true;
+                closing_indent = indent_len;
                 break;
             }
 
@@ -487,6 +501,11 @@ impl<'src> Tokenizer<'src> {
         if self.is_eof() && !found_end {
             self.heredoc_state = None;
             return self.token(TokenKind::Error, start);
+        }
+
+        // Store the closing indent so the lexer can apply dedent
+        if let Some(ref mut state) = self.heredoc_state {
+            state.closing_indent = Some(closing_indent);
         }
 
         self.token(TokenKind::HeredocContent, start)

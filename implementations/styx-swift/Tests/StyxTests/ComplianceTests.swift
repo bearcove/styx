@@ -110,6 +110,7 @@ final class ComplianceTests: XCTestCase {
             swiftNorm, rustNorm,
             """
             Mismatch in \(relPath)
+            \(annotateErrorDiff(source: content, swiftOutput: swiftOutput, rustOutput: rustOutput))
             --- Swift output ---
             \(swiftOutput)
             --- Rust output ---
@@ -193,5 +194,87 @@ final class ComplianceTests: XCTestCase {
             .replacingOccurrences(of: "\n", with: "\\n")
             .replacingOccurrences(of: "\r", with: "\\r")
             .replacingOccurrences(of: "\t", with: "\\t")
+    }
+
+    private func annotateErrorDiff(source: String, swiftOutput: String, rustOutput: String)
+        -> String
+    {
+        let swiftSpan = parseErrorSpan(swiftOutput)
+        let rustSpan = parseErrorSpan(rustOutput)
+
+        if swiftSpan == nil && rustSpan == nil {
+            return ""
+        }
+
+        var result = "\n"
+
+        if let (start, end, msg) = rustSpan {
+            result += "Expected error:\n"
+            result += annotateSpan(source: source, start: start, end: end, msg: msg)
+            result += "\n"
+        } else {
+            result += "Expected: no error\n\n"
+        }
+
+        if let (start, end, msg) = swiftSpan {
+            result += "Got error:\n"
+            result += annotateSpan(source: source, start: start, end: end, msg: msg)
+        } else {
+            result += "Got: no error\n"
+        }
+
+        return result
+    }
+
+    private func parseErrorSpan(_ output: String) -> (Int, Int, String)? {
+        let pattern = #"\(error \[(\d+), (\d+)\] "([^"]*)""#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+            let match = regex.firstMatch(
+                in: output, range: NSRange(output.startIndex..., in: output)),
+            let startRange = Range(match.range(at: 1), in: output),
+            let endRange = Range(match.range(at: 2), in: output),
+            let msgRange = Range(match.range(at: 3), in: output),
+            let start = Int(output[startRange]),
+            let end = Int(output[endRange])
+        else {
+            return nil
+        }
+        return (start, end, String(output[msgRange]))
+    }
+
+    private func annotateSpan(source: String, start: Int, end: Int, msg: String) -> String {
+        guard start >= 0, end >= 0, start <= source.utf8.count else {
+            return "  [invalid span \(start)-\(end)]\n"
+        }
+        let effectiveEnd = min(end, source.utf8.count)
+
+        // Convert byte offsets to string indices
+        let utf8 = Array(source.utf8)
+        guard start < utf8.count else {
+            return "  [span \(start)-\(end) out of bounds]\n"
+        }
+
+        // Find line containing start
+        var lineStart = start
+        while lineStart > 0 && utf8[lineStart - 1] != UInt8(ascii: "\n") {
+            lineStart -= 1
+        }
+        var lineEnd = start
+        while lineEnd < utf8.count && utf8[lineEnd] != UInt8(ascii: "\n") {
+            lineEnd += 1
+        }
+
+        let lineBytes = Array(utf8[lineStart..<lineEnd])
+        let line = String(decoding: lineBytes, as: UTF8.self)
+        let col = start - lineStart
+        var width = effectiveEnd - start
+        if width < 1 { width = 1 }
+        if col + width > line.count {
+            width = max(1, line.count - col)
+        }
+
+        let spaces = String(repeating: " ", count: col)
+        let carets = String(repeating: "^", count: width)
+        return "  \(line)\n  \(spaces)\(carets) \(msg) (\(start)-\(end))\n"
     }
 }

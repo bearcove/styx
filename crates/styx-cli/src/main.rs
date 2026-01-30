@@ -560,9 +560,8 @@ fn run_tree(format: &str, file: &str) -> Result<(), CliError> {
                     styx_tree::BuildError::Parse(_, span) => (span.start, span.end),
                     _ => (0, 0),
                 };
-                let msg = json_escape(&e.to_string());
                 println!("; file: {}", filename);
-                println!("(error [{}, {}] \"{}\")", start, end, msg);
+                println!("(error [{}, {}] {:?})", start, end, e.to_string());
             }
         },
         "debug" => {
@@ -1246,8 +1245,7 @@ fn print_sexp_value(value: &Value, indent: usize) {
             print!("{pad}(unit {span})");
         }
         (Some(tag), payload) => {
-            let tag_name = json_escape(&tag.name);
-            print!("{pad}(tag {span} \"{tag_name}\"");
+            print!("{pad}(tag {span} {:?}", tag.name);
             if let Some(p) = payload {
                 println!();
                 print_sexp_payload(p, indent + 1);
@@ -1263,8 +1261,7 @@ fn print_sexp_value(value: &Value, indent: usize) {
                 ScalarKind::Raw => "raw",
                 ScalarKind::Heredoc => "heredoc",
             };
-            let text = json_escape(&s.text);
-            print!("{pad}(scalar {span} {kind} \"{text}\")");
+            print!("{pad}(scalar {span} {kind} {:?})", s.text);
         }
         (None, Some(Payload::Sequence(seq))) => {
             print!("{pad}(sequence {span}");
@@ -1310,8 +1307,7 @@ fn print_sexp_payload(payload: &Payload, indent: usize) {
                 ScalarKind::Raw => "raw",
                 ScalarKind::Heredoc => "heredoc",
             };
-            let text = json_escape(&s.text);
-            print!("{pad}(scalar {span} {kind} \"{text}\")");
+            print!("{pad}(scalar {span} {kind} {:?})", s.text);
         }
         Payload::Sequence(seq) => {
             let span = seq
@@ -1349,24 +1345,6 @@ fn print_sexp_payload(payload: &Payload, indent: usize) {
             }
         }
     }
-}
-
-fn json_escape(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '"' => result.push_str("\\\""),
-            '\\' => result.push_str("\\\\"),
-            '\n' => result.push_str("\\n"),
-            '\r' => result.push_str("\\r"),
-            '\t' => result.push_str("\\t"),
-            c if c.is_control() => {
-                result.push_str(&format!("\\u{:04x}", c as u32));
-            }
-            c => result.push(c),
-        }
-    }
-    result
 }
 
 // ============================================================================

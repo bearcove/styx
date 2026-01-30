@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -112,9 +113,97 @@ func compareOutput(t *testing.T, file string, styxCLI string) {
 	rustNorm := normalizeOutput(rustOutput)
 
 	if goNorm != rustNorm {
-		t.Errorf("output mismatch\n--- Go output ---\n%s\n--- Rust output ---\n%s",
+		t.Errorf("output mismatch\n%s\n--- Go output ---\n%s\n--- Rust output ---\n%s",
+			annotateErrorDiff(string(content), goOutput, rustOutput),
 			goOutput, rustOutput)
 	}
+}
+
+// annotateErrorDiff shows the first error span difference with source context
+func annotateErrorDiff(source, goOutput, rustOutput string) string {
+	goSpan, goMsg := parseErrorSpan(goOutput)
+	rustSpan, rustMsg := parseErrorSpan(rustOutput)
+
+	if goSpan == nil && rustSpan == nil {
+		return "" // No errors to annotate
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n")
+
+	if rustSpan != nil {
+		sb.WriteString("Expected error:\n")
+		sb.WriteString(annotateSpan(source, rustSpan[0], rustSpan[1], rustMsg))
+		sb.WriteString("\n")
+	} else {
+		sb.WriteString("Expected: no error\n\n")
+	}
+
+	if goSpan != nil {
+		sb.WriteString("Got error:\n")
+		sb.WriteString(annotateSpan(source, goSpan[0], goSpan[1], goMsg))
+	} else {
+		sb.WriteString("Got: no error\n")
+	}
+
+	return sb.String()
+}
+
+// parseErrorSpan extracts [start, end] and message from sexp error output
+func parseErrorSpan(output string) ([]int, string) {
+	re := regexp.MustCompile(`\(error \[(\d+), (\d+)\] "([^"]*)"`)
+	m := re.FindStringSubmatch(output)
+	if m == nil {
+		return nil, ""
+	}
+	start, _ := strconv.Atoi(m[1])
+	end, _ := strconv.Atoi(m[2])
+	return []int{start, end}, m[3]
+}
+
+// annotateSpan shows source with carets under the error span
+func annotateSpan(source string, start, end int, msg string) string {
+	if start < 0 || end < 0 || start > len(source) {
+		return fmt.Sprintf("  [invalid span %d-%d]\n", start, end)
+	}
+	if end > len(source) {
+		end = len(source)
+	}
+
+	// Find line containing start
+	lineStart := start
+	for lineStart > 0 && source[lineStart-1] != '\n' {
+		lineStart--
+	}
+	lineEnd := start
+	for lineEnd < len(source) && source[lineEnd] != '\n' {
+		lineEnd++
+	}
+
+	line := source[lineStart:lineEnd]
+	col := start - lineStart
+	width := end - start
+	if width < 1 {
+		width = 1
+	}
+	if col+width > len(line) {
+		width = len(line) - col
+		if width < 1 {
+			width = 1
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("  ")
+	sb.WriteString(line)
+	sb.WriteString("\n  ")
+	sb.WriteString(strings.Repeat(" ", col))
+	sb.WriteString(strings.Repeat("^", width))
+	sb.WriteString(" ")
+	sb.WriteString(msg)
+	sb.WriteString(fmt.Sprintf(" (%d-%d)", start, end))
+	sb.WriteString("\n")
+	return sb.String()
 }
 
 func getGoOutput(content string) string {
