@@ -79,6 +79,23 @@ enum State {
     /// After emitting quoted scalar, check for TooManyAtoms on same line.
     AfterQuotedScalarValue { value_span: Span },
 
+    /// Emit invalid escape errors for a quoted string, then emit the scalar.
+    EmitInvalidEscapes {
+        span: Span,
+        kind: ScalarKind,
+        /// Offsets within the string (relative to span.start + 1 for the opening quote)
+        errors: Vec<(usize, usize)>,
+        error_index: usize,
+    },
+
+    /// Emit invalid escape errors for a quoted KEY, then continue to EmitKey.
+    EmitInvalidEscapesInKey {
+        key_span: Span,
+        key_kind: ScalarKind,
+        errors: Vec<(usize, usize)>,
+        error_index: usize,
+    },
+
     /// Emit EntryEnd, then go back to ExpectEntry.
     EmitEntryEnd,
 
@@ -316,6 +333,80 @@ impl<'src> Parser3<'src> {
         }
     }
 
+    /// Check if a tag name is valid.
+    /// Tag names cannot start with digit, hyphen, or dot, and cannot contain dots.
+    fn is_valid_tag_name(&self, name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        let first = name.chars().next().unwrap();
+        if first.is_ascii_digit() || first == '-' || first == '.' {
+            return false;
+        }
+        if name.contains('.') {
+            return false;
+        }
+        true
+    }
+
+    /// Find invalid escape sequences in a quoted string.
+    /// Returns a list of (byte_offset_within_inner, length) for each invalid escape.
+    fn find_invalid_escapes(&self, text: &str) -> Vec<(usize, usize)> {
+        let inner = &text[1..text.len() - 1];
+        let mut invalid = Vec::new();
+        let mut i = 0;
+        let bytes = inner.as_bytes();
+
+        while i < bytes.len() {
+            if bytes[i] == b'\\' {
+                let escape_start = i;
+                i += 1;
+                if i >= bytes.len() {
+                    invalid.push((escape_start, 1));
+                    break;
+                }
+                match bytes[i] {
+                    b'n' | b'r' | b't' | b'\\' | b'"' => {
+                        i += 1;
+                    }
+                    b'u' => {
+                        // Unicode escape - \uXXXX or \u{X...}
+                        i += 1;
+                        if i < bytes.len() && bytes[i] == b'{' {
+                            // \u{...} - skip to }
+                            while i < bytes.len() && bytes[i] != b'}' {
+                                i += 1;
+                            }
+                            if i < bytes.len() {
+                                i += 1; // skip '}'
+                            }
+                        } else {
+                            // \uXXXX - skip 4 hex digits
+                            let mut count = 0;
+                            while i < bytes.len() && count < 4 {
+                                if bytes[i].is_ascii_hexdigit() {
+                                    i += 1;
+                                    count += 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        // Invalid escape
+                        invalid.push((escape_start, 2));
+                        i += 1;
+                    }
+                }
+            } else {
+                i += 1;
+            }
+        }
+
+        invalid
+    }
+
     /// Unescape a quoted string (strip quotes, process escapes).
     fn unescape_quoted(&self, text: &'src str) -> Cow<'src, str> {
         // Strip surrounding quotes
@@ -527,14 +618,63 @@ impl<'src> Parser3<'src> {
                 }
 
                 State::EmitEntryStart { key_span, key_kind } => {
+                    // For quoted keys, check for invalid escapes first
+                    if key_kind == ScalarKind::Quoted {
+                        let text = self.text_at(key_span);
+                        let invalid_escapes = self.find_invalid_escapes(text);
+                        if !invalid_escapes.is_empty() {
+                            self.state = State::EmitInvalidEscapesInKey {
+                                key_span,
+                                key_kind,
+                                errors: invalid_escapes,
+                                error_index: 0,
+                            };
+                            continue;
+                        }
+                    }
                     self.state = State::EmitKey { key_span, key_kind };
                     return Some(Event::EntryStart);
                 }
 
                 State::EmitUnitKeyValue { at_span } => {
                     // Emit Key with no payload, then read value
-                    // First read next token to see the value
-                    let t = self.next_token_skip_ws();
+                    // First read next token - check if it's immediately after @ (tag)
+                    let t = self.lexer.next_token();
+
+                    // If bare scalar immediately after @, it's a tag name
+                    if t.kind == TokenKind::BareScalar && t.span.start == at_span.end {
+                        // This is actually a tag like @SomeTag or @Some.Type
+                        let tag_name = self.text_at(t.span);
+                        // Validate tag name
+                        if !self.is_valid_tag_name(tag_name) {
+                            // Invalid tag name
+                            loop {
+                                let skip = self.lexer.next_token();
+                                match skip.kind {
+                                    TokenKind::Newline | TokenKind::Eof => break,
+                                    _ => continue,
+                                }
+                            }
+                            self.state = State::ExpectEntry;
+                            return Some(Event::Error {
+                                span: t.span,
+                                kind: ParseErrorKind::InvalidTagName,
+                            });
+                        }
+                        // Valid tag - process it
+                        self.state = State::AfterTagStart { tag_span: t.span };
+                        return Some(Event::TagStart {
+                            span: Span::new(at_span.start, t.span.end),
+                            name: tag_name,
+                        });
+                    }
+
+                    // Skip whitespace if needed
+                    let t = if t.kind == TokenKind::Whitespace {
+                        self.next_token_skip_ws()
+                    } else {
+                        t
+                    };
 
                     match t.kind {
                         TokenKind::BareScalar => {
@@ -613,9 +753,14 @@ impl<'src> Parser3<'src> {
                         _ => Cow::Borrowed(key_text),
                     };
 
-                    // Read next token to see what the value is
-                    let t = self.next_token_skip_ws();
-                    trace!(token = ?t, "EmitKey got token");
+                    // Read next token - check for whitespace first
+                    let first_token = self.lexer.next_token();
+                    let (t, had_whitespace) = if first_token.kind == TokenKind::Whitespace {
+                        (self.next_token_skip_ws(), true)
+                    } else {
+                        (first_token, false)
+                    };
+                    trace!(token = ?t, had_whitespace, "EmitKey got token");
 
                     match t.kind {
                         TokenKind::BareScalar => {
@@ -655,16 +800,28 @@ impl<'src> Parser3<'src> {
                         TokenKind::RBrace => {
                             // Key with unit value, then close brace
                             // We need to emit: Key, Unit, EntryEnd, ObjectEnd
-                            // Current call: emit Key
-                            // Next state needs to emit Unit, then handle the }
-                            // But we consumed the }!
-                            //
-                            // Solution: add a state that remembers we need to close
-                            todo!("unit value then close brace")
+                            self.state = State::EmitUnitThenEntryEndThenObjectEnd {
+                                unit_span: key_span,
+                                rbrace_span: t.span,
+                            };
+                            return Some(Event::Key {
+                                span: key_span,
+                                tag: None,
+                                payload: Some(key_payload),
+                                kind: key_kind,
+                            });
                         }
 
                         TokenKind::LBrace => {
-                            // Nested object as value
+                            // Nested object as value - check for missing whitespace
+                            if !had_whitespace && key_kind == ScalarKind::Bare {
+                                // key{} without whitespace is an error
+                                self.state = State::EmitObjectStartValue { span: t.span };
+                                return Some(Event::Error {
+                                    span: t.span,
+                                    kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
+                                });
+                            }
                             self.state = State::EmitObjectStartValue { span: t.span };
                             return Some(Event::Key {
                                 span: key_span,
@@ -675,7 +832,15 @@ impl<'src> Parser3<'src> {
                         }
 
                         TokenKind::LParen => {
-                            // Sequence as value
+                            // Sequence as value - check for missing whitespace
+                            if !had_whitespace && key_kind == ScalarKind::Bare {
+                                // key() without whitespace is an error
+                                self.state = State::EmitSequenceStartValue { span: t.span };
+                                return Some(Event::Error {
+                                    span: t.span,
+                                    kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
+                                });
+                            }
                             self.state = State::EmitSequenceStartValue { span: t.span };
                             return Some(Event::Key {
                                 span: key_span,
@@ -723,6 +888,21 @@ impl<'src> Parser3<'src> {
                 }
 
                 State::EmitScalarValue { span, kind } => {
+                    // For quoted strings, check for invalid escapes first
+                    if kind == ScalarKind::Quoted {
+                        let text = self.text_at(span);
+                        let invalid_escapes = self.find_invalid_escapes(text);
+                        if !invalid_escapes.is_empty() {
+                            self.state = State::EmitInvalidEscapes {
+                                span,
+                                kind,
+                                errors: invalid_escapes,
+                                error_index: 0,
+                            };
+                            continue;
+                        }
+                    }
+
                     let text = self.text_at(span);
                     let value = match kind {
                         ScalarKind::Quoted => self.unescape_quoted(text),
@@ -866,11 +1046,46 @@ impl<'src> Parser3<'src> {
                 }
 
                 State::EmitTooManyAtomsThenEntryEnd { error_span } => {
+                    // After TooManyAtoms, skip to end of line/object/sequence
+                    // to avoid cascading errors
+                    loop {
+                        let t = self.lexer.next_token();
+                        match t.kind {
+                            TokenKind::Newline | TokenKind::Eof => break,
+                            TokenKind::RBrace => {
+                                // Need to handle close brace
+                                match self.context_stack.last() {
+                                    Some(Context::Object { implicit: false }) => {
+                                        self.context_stack.pop();
+                                        // Don't emit ObjectEnd here - we'll do it after EntryEnd
+                                        // Actually, this is complex. Just break and let normal flow handle it.
+                                        break;
+                                    }
+                                    _ => break,
+                                }
+                            }
+                            TokenKind::RParen => break,
+                            _ => continue, // Skip other tokens
+                        }
+                    }
                     self.state = State::EmitEntryEnd;
                     return Some(Event::Error {
                         span: error_span,
                         kind: ParseErrorKind::TooManyAtoms,
                     });
+                }
+
+                State::EmitUnitThenEntryEndThenObjectEnd {
+                    unit_span,
+                    rbrace_span,
+                } => {
+                    self.state = State::EmitEntryEndAfterUnitThenObjectEnd { rbrace_span };
+                    return Some(Event::Unit { span: unit_span });
+                }
+
+                State::EmitEntryEndAfterUnitThenObjectEnd { rbrace_span } => {
+                    self.state = State::EmitObjectEndAfterEntry { rbrace_span };
+                    return Some(Event::EntryEnd);
                 }
 
                 State::EmitScalarThenTooManyAtoms {
@@ -883,6 +1098,72 @@ impl<'src> Parser3<'src> {
                         value: Cow::Borrowed(self.text_at(value_span)),
                         kind: ScalarKind::Bare,
                     });
+                }
+
+                State::EmitInvalidEscapesInKey {
+                    key_span,
+                    key_kind,
+                    errors,
+                    error_index,
+                } => {
+                    if error_index < errors.len() {
+                        let (offset, len) = errors[error_index];
+                        let error_start = key_span.start + 1 + offset as u32;
+                        let error_span = Span::new(error_start, error_start + len as u32);
+                        let escape_text = self.text_at(error_span).to_string();
+
+                        self.state = State::EmitInvalidEscapesInKey {
+                            key_span,
+                            key_kind,
+                            errors,
+                            error_index: error_index + 1,
+                        };
+                        return Some(Event::Error {
+                            span: error_span,
+                            kind: ParseErrorKind::InvalidEscape(escape_text),
+                        });
+                    } else {
+                        // All errors emitted, continue to emit EntryStart and Key
+                        self.state = State::EmitKey { key_span, key_kind };
+                        return Some(Event::EntryStart);
+                    }
+                }
+
+                State::EmitInvalidEscapes {
+                    span,
+                    kind,
+                    errors,
+                    error_index,
+                } => {
+                    if error_index < errors.len() {
+                        let (offset, len) = errors[error_index];
+                        // Offset is relative to inner string (after opening quote)
+                        let error_start = span.start + 1 + offset as u32;
+                        let error_span = Span::new(error_start, error_start + len as u32);
+
+                        // Get the escape sequence text
+                        let escape_text = self.text_at(error_span).to_string();
+
+                        self.state = State::EmitInvalidEscapes {
+                            span,
+                            kind,
+                            errors,
+                            error_index: error_index + 1,
+                        };
+                        return Some(Event::Error {
+                            span: error_span,
+                            kind: ParseErrorKind::InvalidEscape(escape_text),
+                        });
+                    } else {
+                        // All errors emitted, now emit the scalar
+                        let text = self.text_at(span);
+                        let value = match kind {
+                            ScalarKind::Quoted => self.unescape_quoted(text),
+                            _ => Cow::Borrowed(text),
+                        };
+                        self.state = State::AfterQuotedScalarValue { value_span: span };
+                        return Some(Event::Scalar { span, value, kind });
+                    }
                 }
 
                 State::AfterQuotedScalarValue { value_span: _ } => {
@@ -1026,6 +1307,24 @@ impl<'src> Parser3<'src> {
                                 };
 
                             let name_end = t.span.start + tag_name.len() as u32;
+
+                            // Validate tag name
+                            if !self.is_valid_tag_name(tag_name) {
+                                // Invalid tag name - emit error, skip to end of line
+                                loop {
+                                    let skip = self.lexer.next_token();
+                                    match skip.kind {
+                                        TokenKind::Newline | TokenKind::Eof => break,
+                                        _ => continue,
+                                    }
+                                }
+                                self.state = State::EmitEntryEnd;
+                                // Error span is just the tag name part, not the @
+                                return Some(Event::Error {
+                                    span: t.span,
+                                    kind: ParseErrorKind::InvalidTagName,
+                                });
+                            }
 
                             if has_trailing_at {
                                 // @tag@ - explicit unit payload

@@ -129,11 +129,6 @@ a b c
 
 #[test]
 fn test_too_many_atoms_in_object() {
-    let events = parse(r#"{label ": BIGINT" line 4}"#);
-    eprintln!("EVENTS:");
-    for (i, e) in events.iter().enumerate() {
-        eprintln!("  {i}: {e:?}");
-    }
     assert_parse_errors(
         r#"
 {label ": BIGINT" line 4}
