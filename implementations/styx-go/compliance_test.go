@@ -261,13 +261,13 @@ func formatPayloadSexp(value *Value, indent int) string {
 	case PayloadObject:
 		obj := value.Object
 		if len(obj.Entries) == 0 {
-			return fmt.Sprintf("(object [%d, %d] %s)", obj.Span.Start, obj.Span.End, obj.Separator)
+			return fmt.Sprintf("(object [%d, %d])", obj.Span.Start, obj.Span.End)
 		}
 		var entries []string
 		for _, entry := range obj.Entries {
 			entries = append(entries, formatEntrySexp(entry, indent+1))
 		}
-		return fmt.Sprintf("(object [%d, %d] %s\n%s\n%s)", obj.Span.Start, obj.Span.End, obj.Separator, strings.Join(entries, "\n"), prefix)
+		return fmt.Sprintf("(object [%d, %d]\n%s\n%s)", obj.Span.Start, obj.Span.End, strings.Join(entries, "\n"), prefix)
 	}
 
 	return "(unknown)"

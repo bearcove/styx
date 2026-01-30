@@ -8,7 +8,6 @@ import {
   Document,
   Span,
   ParseError,
-  Separator,
   ScalarKind,
   PathState,
   PathValueKind,
@@ -178,7 +177,6 @@ export class Parser {
         payload: {
           type: "object",
           entries: [{ key: segmentKey, value: result }],
-          separator: "newline",
           span: objSpan,
         },
         span: objSpan,
@@ -326,7 +324,6 @@ export class Parser {
         payload: {
           type: "object",
           entries: [{ key: segmentKey, value: result }],
-          separator: "newline",
           span,
         },
         span,
@@ -510,7 +507,6 @@ export class Parser {
     const obj: StyxObject = {
       type: "object",
       entries: attrs,
-      separator: "comma",
       span: { start: startSpan.start, end: endSpan.end },
     };
 
@@ -564,7 +560,6 @@ export class Parser {
     const obj: StyxObject = {
       type: "object",
       entries: attrs,
-      separator: "comma",
       span: { start: startSpan.start, end: endSpan.end },
     };
 

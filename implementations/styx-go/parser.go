@@ -400,9 +400,8 @@ func (p *parser) expandDottedPathWithState(pathText string, span Span, ps *pathS
 			Span:        objSpan,
 			PayloadKind: PayloadObject,
 			Object: &Object{
-				Entries:   []*Entry{{Key: segmentKey, Value: result}},
-				Separator: SeparatorNewline,
-				Span:      objSpan,
+				Entries: []*Entry{{Key: segmentKey, Value: result}},
+				Span:    objSpan,
 			},
 		}
 	}
@@ -623,9 +622,8 @@ func (p *parser) parseAttributesAfterGT(firstKeyToken *Token) (*Value, error) {
 	}
 
 	obj := &Object{
-		Entries:   attrs,
-		Separator: SeparatorComma,
-		Span:      Span{startSpan.Start, endSpan.End},
+		Entries: attrs,
+		Span:    Span{startSpan.Start, endSpan.End},
 	}
 
 	return &Value{Span: obj.Span, PayloadKind: PayloadObject, Object: obj}, nil
@@ -662,14 +660,7 @@ func (p *parser) parseObject() (*Object, error) {
 	}
 	start := openBrace.Span.Start
 	entries := []*Entry{}
-	var separator Separator
-	hasSeparator := false
 	seenKeys := make(map[string]Span)
-
-	if p.current.HadNewlineBefore {
-		separator = SeparatorNewline
-		hasSeparator = true
-	}
 
 	for !p.check(TokenRBrace, TokenEOF) {
 		entry, err := p.parseEntryWithDupCheck(seenKeys)
@@ -680,30 +671,10 @@ func (p *parser) parseObject() (*Object, error) {
 			entries = append(entries, entry)
 		}
 
+		// Skip commas (mixed separators are allowed)
 		if p.check(TokenComma) {
-			if hasSeparator && separator == SeparatorNewline {
-				return nil, &ParseError{
-					Message: "mixed separators (use either commas or newlines)",
-					Span:    p.current.Span,
-				}
-			}
-			separator = SeparatorComma
-			hasSeparator = true
 			p.advance()
-		} else if !p.check(TokenRBrace, TokenEOF) {
-			if hasSeparator && separator == SeparatorComma {
-				return nil, &ParseError{
-					Message: "mixed separators (use either commas or newlines)",
-					Span:    p.current.Span,
-				}
-			}
-			separator = SeparatorNewline
-			hasSeparator = true
 		}
-	}
-
-	if !hasSeparator {
-		separator = SeparatorComma
 	}
 
 	if p.check(TokenEOF) {
@@ -717,7 +688,7 @@ func (p *parser) parseObject() (*Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Object{Entries: entries, Separator: separator, Span: Span{start, closeBrace.Span.End}}, nil
+	return &Object{Entries: entries, Span: Span{start, closeBrace.Span.End}}, nil
 }
 
 func (p *parser) parseSequence() (*Sequence, error) {
