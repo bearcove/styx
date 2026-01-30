@@ -96,10 +96,10 @@ pub enum Event<'src> {
     },
     /// Doc comment `/// ...`.
     DocComment {
-        /// Span of the doc comment.
+        /// Span of the doc comment (covers all consecutive doc comment lines).
         span: Span,
-        /// Doc comment text (including ///).
-        text: &'src str,
+        /// Doc comment lines (without `/// ` prefix).
+        lines: Vec<&'src str>,
     },
 
     // Errors

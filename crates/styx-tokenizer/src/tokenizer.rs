@@ -590,6 +590,7 @@ fn is_bare_scalar_char(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use facet_testhelpers::test;
 
     fn tokenize(source: &str) -> Vec<(TokenKind, &str)> {
         Tokenizer::new(source).map(|t| (t.kind, t.text)).collect()

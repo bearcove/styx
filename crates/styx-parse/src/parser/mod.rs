@@ -73,12 +73,6 @@ enum ParserState {
         parent: Box<ParserState>,
     },
 
-    /// Inside sequence ( ... ).
-    InSequence {
-        start_span: Span,
-        parent: Box<ParserState>,
-    },
-
     /// Document ended.
     AfterDocument,
 
@@ -132,24 +126,19 @@ impl<'src> Parser<'src> {
 
     /// Advance the state machine.
     fn advance(&mut self) -> Option<Event<'src>> {
-        loop {
-            match &self.state {
-                ParserState::BeforeDocument => {
-                    self.state = ParserState::DocumentRoot {
-                        seen_keys: HashMap::new(),
-                        pending_doc_comment: None,
-                        path_state: PathState::default(),
-                    };
-                    return Some(Event::DocumentStart);
-                }
-                ParserState::BeforeExpression => {
-                    return self.advance_expression();
-                }
-                ParserState::AfterDocument | ParserState::AfterExpression => return None,
-                ParserState::DocumentRoot { .. } => return self.advance_document_root(),
-                ParserState::InObject { .. } => return self.advance_in_object(),
-                ParserState::InSequence { .. } => return self.advance_in_sequence(),
+        match &self.state {
+            ParserState::BeforeDocument => {
+                self.state = ParserState::DocumentRoot {
+                    seen_keys: HashMap::new(),
+                    pending_doc_comment: None,
+                    path_state: PathState::default(),
+                };
+                Some(Event::DocumentStart)
             }
+            ParserState::BeforeExpression => self.advance_expression(),
+            ParserState::AfterDocument | ParserState::AfterExpression => None,
+            ParserState::DocumentRoot { .. } => self.advance_document_root(),
+            ParserState::InObject { .. } => self.advance_in_object(),
         }
     }
 
@@ -185,13 +174,12 @@ impl<'src> Parser<'src> {
                         pending_doc_comment,
                         ..
                     } = &mut self.state
+                        && let Some(span) = pending_doc_comment.take()
                     {
-                        if let Some(span) = pending_doc_comment.take() {
-                            self.event_queue.push_back(Event::Error {
-                                span,
-                                kind: ParseErrorKind::DanglingDocComment,
-                            });
-                        }
+                        self.event_queue.push_back(Event::Error {
+                            span,
+                            kind: ParseErrorKind::DanglingDocComment,
+                        });
                     }
                     self.event_queue.push_back(Event::DocumentEnd);
                     self.state = ParserState::AfterDocument;
@@ -209,7 +197,15 @@ impl<'src> Parser<'src> {
                     {
                         *pending_doc_comment = Some(span);
                     }
-                    return Some(Event::DocComment { span, text });
+                    // Strip `/// ` or `///` prefix
+                    let line = text
+                        .strip_prefix("/// ")
+                        .or_else(|| text.strip_prefix("///"))
+                        .unwrap_or(text);
+                    return Some(Event::DocComment {
+                        span,
+                        lines: vec![line],
+                    });
                 }
                 Lexeme::ObjectStart { span } => {
                     // Explicit root object
@@ -223,7 +219,7 @@ impl<'src> Parser<'src> {
                         },
                     );
                     if let ParserState::InObject { parent, .. } = &mut self.state {
-                        *parent = Box::new(old_state);
+                        **parent = old_state;
                     }
                     return Some(Event::ObjectStart {
                         span,
@@ -264,13 +260,12 @@ impl<'src> Parser<'src> {
                         pending_doc_comment,
                         ..
                     } = &mut self.state
+                        && let Some(span) = pending_doc_comment.take()
                     {
-                        if let Some(span) = pending_doc_comment.take() {
-                            self.event_queue.push_back(Event::Error {
-                                span,
-                                kind: ParseErrorKind::DanglingDocComment,
-                            });
-                        }
+                        self.event_queue.push_back(Event::Error {
+                            span,
+                            kind: ParseErrorKind::DanglingDocComment,
+                        });
                     }
                     self.event_queue.push_back(Event::Error {
                         span: start,
@@ -285,13 +280,12 @@ impl<'src> Parser<'src> {
                         pending_doc_comment,
                         ..
                     } = &mut self.state
+                        && let Some(doc_span) = pending_doc_comment.take()
                     {
-                        if let Some(doc_span) = pending_doc_comment.take() {
-                            self.event_queue.push_back(Event::Error {
-                                span: doc_span,
-                                kind: ParseErrorKind::DanglingDocComment,
-                            });
-                        }
+                        self.event_queue.push_back(Event::Error {
+                            span: doc_span,
+                            kind: ParseErrorKind::DanglingDocComment,
+                        });
                     }
                     self.pop_state();
                     return Some(Event::ObjectEnd { span });
@@ -308,7 +302,15 @@ impl<'src> Parser<'src> {
                     {
                         *pending_doc_comment = Some(span);
                     }
-                    return Some(Event::DocComment { span, text });
+                    // Strip `/// ` or `///` prefix
+                    let line = text
+                        .strip_prefix("/// ")
+                        .or_else(|| text.strip_prefix("///"))
+                        .unwrap_or(text);
+                    return Some(Event::DocComment {
+                        span,
+                        lines: vec![line],
+                    });
                 }
                 _ => {
                     if let ParserState::InObject {
@@ -328,57 +330,10 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Advance when in InSequence state.
-    fn advance_in_sequence(&mut self) -> Option<Event<'src>> {
-        let start = if let ParserState::InSequence { start_span, .. } = &self.state {
-            *start_span
-        } else {
-            return None;
-        };
-
-        loop {
-            let lexeme = self.source.next();
-            match lexeme {
-                Lexeme::Eof => {
-                    self.event_queue.push_back(Event::Error {
-                        span: start,
-                        kind: ParseErrorKind::UnclosedSequence,
-                    });
-                    self.event_queue
-                        .push_back(Event::SequenceEnd { span: start });
-                    self.pop_state();
-                    return self.event_queue.pop_front();
-                }
-                Lexeme::SeqEnd { span } => {
-                    self.pop_state();
-                    return Some(Event::SequenceEnd { span });
-                }
-                Lexeme::Newline { .. } => continue,
-                Lexeme::Comma { span } => {
-                    return Some(Event::Error {
-                        span,
-                        kind: ParseErrorKind::CommaInSequence,
-                    });
-                }
-                Lexeme::Comment { span, text } => {
-                    return Some(Event::Comment { span, text });
-                }
-                Lexeme::DocComment { span, text } => {
-                    return Some(Event::DocComment { span, text });
-                }
-                _ => {
-                    let atom = self.parse_atom(lexeme);
-                    self.emit_atom_as_value(&atom);
-                    return self.event_queue.pop_front();
-                }
-            }
-        }
-    }
-
     /// Pop the current state and restore parent.
     fn pop_state(&mut self) {
         let parent = match &mut self.state {
-            ParserState::InObject { parent, .. } | ParserState::InSequence { parent, .. } => {
+            ParserState::InObject { parent, .. } => {
                 std::mem::replace(parent.as_mut(), ParserState::AfterDocument)
             }
             _ => ParserState::AfterDocument,
@@ -413,11 +368,10 @@ impl<'src> Parser<'src> {
             value,
             kind: ScalarKind::Bare,
         } = &key_atom.content
+            && value.contains('.')
         {
-            if value.contains('.') {
-                self.emit_dotted_path_entry(value.clone(), key_atom.span, atoms, true);
-                return;
-            }
+            self.emit_dotted_path_entry(value.clone(), key_atom.span, atoms, true);
+            return;
         }
 
         // Simple key - use path state for duplicate detection at root level
@@ -472,11 +426,10 @@ impl<'src> Parser<'src> {
             value,
             kind: ScalarKind::Bare,
         } = &key_atom.content
+            && value.contains('.')
         {
-            if value.contains('.') {
-                self.emit_dotted_path_entry(value.clone(), key_atom.span, atoms, false);
-                return;
-            }
+            self.emit_dotted_path_entry(value.clone(), key_atom.span, atoms, false);
+            return;
         }
 
         // Simple key - check for duplicates
@@ -553,7 +506,15 @@ impl<'src> Parser<'src> {
                     break;
                 }
                 Lexeme::DocComment { span, text } => {
-                    self.event_queue.push_back(Event::DocComment { span, text });
+                    // Strip `/// ` or `///` prefix
+                    let line = text
+                        .strip_prefix("/// ")
+                        .or_else(|| text.strip_prefix("///"))
+                        .unwrap_or(text);
+                    self.event_queue.push_back(Event::DocComment {
+                        span,
+                        lines: vec![line],
+                    });
                     break;
                 }
                 Lexeme::ObjectStart { span } | Lexeme::SeqStart { span } => {
@@ -635,20 +596,20 @@ impl<'src> Parser<'src> {
                         value,
                         kind: ScalarKind::Bare,
                     } = &next
+                        && scalar_span.start == span.end
+                        && value.starts_with('.')
                     {
-                        if scalar_span.start == span.end && value.starts_with('.') {
-                            // Combined invalid tag name like @Some.Type
-                            let combined_name_span = Span::new(span.start + 1, scalar_span.end);
-                            return Atom {
-                                span: Span::new(span.start, scalar_span.end),
-                                content: AtomContent::Tag {
-                                    name,
-                                    payload: None,
-                                    invalid_name: true,
-                                    error_span: Some(combined_name_span),
-                                },
-                            };
-                        }
+                        // Combined invalid tag name like @Some.Type
+                        let combined_name_span = Span::new(span.start + 1, scalar_span.end);
+                        return Atom {
+                            span: Span::new(span.start, scalar_span.end),
+                            content: AtomContent::Tag {
+                                name,
+                                payload: None,
+                                invalid_name: true,
+                                error_span: Some(combined_name_span),
+                            },
+                        };
                     }
                     self.source.stash(next);
                 }
@@ -700,7 +661,7 @@ impl<'src> Parser<'src> {
                 } else {
                     Atom {
                         span,
-                        content: AtomContent::Error { message },
+                        content: AtomContent::Error,
                     }
                 }
             }
@@ -709,21 +670,15 @@ impl<'src> Parser<'src> {
             | Lexeme::Comma { span }
             | Lexeme::Newline { span } => Atom {
                 span,
-                content: AtomContent::Error {
-                    message: "unexpected token",
-                },
+                content: AtomContent::Error,
             },
             Lexeme::Comment { span, .. } | Lexeme::DocComment { span, .. } => Atom {
                 span,
-                content: AtomContent::Error {
-                    message: "unexpected comment",
-                },
+                content: AtomContent::Error,
             },
             Lexeme::Eof => Atom {
                 span: Span::new(self.input.len() as u32, self.input.len() as u32),
-                content: AtomContent::Error {
-                    message: "unexpected EOF",
-                },
+                content: AtomContent::Error,
             },
         }
     }
@@ -734,7 +689,7 @@ impl<'src> Parser<'src> {
         let mut seen_keys: HashMap<KeyValue, Span> = HashMap::new();
         let mut duplicate_key_spans: Vec<(Span, Span)> = Vec::new();
         let mut dangling_doc_comment_spans: Vec<Span> = Vec::new();
-        let mut pending_doc_comment: Option<(Span, &'src str)> = None;
+        let mut pending_doc_comments: Vec<(Span, &'src str)> = Vec::new();
         let mut unclosed = false;
         let mut end_span = start_span;
 
@@ -743,14 +698,14 @@ impl<'src> Parser<'src> {
             match lexeme {
                 Lexeme::Eof => {
                     unclosed = true;
-                    if let Some((span, _)) = pending_doc_comment {
-                        dangling_doc_comment_spans.push(span);
+                    for (span, _) in &pending_doc_comments {
+                        dangling_doc_comment_spans.push(*span);
                     }
                     break;
                 }
                 Lexeme::ObjectEnd { span } => {
-                    if let Some((span, _)) = pending_doc_comment {
-                        dangling_doc_comment_spans.push(span);
+                    for (s, _) in &pending_doc_comments {
+                        dangling_doc_comment_spans.push(*s);
                     }
                     end_span = span;
                     break;
@@ -758,10 +713,28 @@ impl<'src> Parser<'src> {
                 Lexeme::Newline { .. } | Lexeme::Comma { .. } => continue,
                 Lexeme::Comment { .. } => continue,
                 Lexeme::DocComment { span, text } => {
-                    pending_doc_comment = Some((span, text));
+                    pending_doc_comments.push((span, text));
                 }
                 _ => {
-                    let doc_comment = pending_doc_comment.take();
+                    let doc_comment = if pending_doc_comments.is_empty() {
+                        None
+                    } else {
+                        // Collect all doc comments, stripping the `/// ` prefix from each
+                        let first_span = pending_doc_comments.first().unwrap().0;
+                        let last_span = pending_doc_comments.last().unwrap().0;
+                        let combined_span = Span::new(first_span.start, last_span.end);
+                        let lines: Vec<&'src str> = pending_doc_comments
+                            .iter()
+                            .map(|(_, text)| {
+                                // Strip `/// ` or `///` prefix
+                                text.strip_prefix("/// ")
+                                    .or_else(|| text.strip_prefix("///"))
+                                    .unwrap_or(*text)
+                            })
+                            .collect();
+                        pending_doc_comments.clear();
+                        Some((combined_span, lines))
+                    };
                     let entry_atoms = self.collect_entry_atoms(lexeme);
 
                     if !entry_atoms.is_empty() {
@@ -916,33 +889,30 @@ impl<'src> Parser<'src> {
         }
 
         // Check path state at root
-        if check_path_state {
-            if let ParserState::DocumentRoot {
+        if check_path_state
+            && let ParserState::DocumentRoot {
                 seen_keys,
                 path_state,
                 ..
             } = &mut self.state
-            {
-                let first_key_value = KeyValue::Scalar(segments[0].to_string());
-                if !seen_keys.contains_key(&first_key_value) {
-                    seen_keys.insert(first_key_value, path_span);
-                }
+        {
+            let first_key_value = KeyValue::Scalar(segments[0].to_string());
+            seen_keys.entry(first_key_value).or_insert(path_span);
 
-                let path: Vec<String> = segments.iter().map(|s| s.to_string()).collect();
-                let value_kind = if atoms.len() >= 2 {
-                    match &atoms[1].content {
-                        AtomContent::Object { .. } | AtomContent::Attributes(_) => {
-                            PathValueKind::Object
-                        }
-                        _ => PathValueKind::Terminal,
+            let path: Vec<String> = segments.iter().map(|s| s.to_string()).collect();
+            let value_kind = if atoms.len() >= 2 {
+                match &atoms[1].content {
+                    AtomContent::Object { .. } | AtomContent::Attributes(_) => {
+                        PathValueKind::Object
                     }
-                } else {
-                    PathValueKind::Terminal
-                };
-
-                if let Err(err) = path_state.check_and_update(&path, path_span, value_kind) {
-                    self.emit_path_error(err, path_span);
+                    _ => PathValueKind::Terminal,
                 }
+            } else {
+                PathValueKind::Terminal
+            };
+
+            if let Err(err) = path_state.check_and_update(&path, path_span, value_kind) {
+                self.emit_path_error(err, path_span);
             }
         }
 
@@ -1186,9 +1156,11 @@ impl<'src> Parser<'src> {
                 }
 
                 for entry in entries {
-                    if let Some((span, text)) = &entry.doc_comment {
-                        self.event_queue
-                            .push_back(Event::DocComment { span: *span, text });
+                    if let Some((span, lines)) = &entry.doc_comment {
+                        self.event_queue.push_back(Event::DocComment {
+                            span: *span,
+                            lines: lines.clone(),
+                        });
                     }
                     self.event_queue.push_back(Event::EntryStart);
                     self.emit_atom_as_key(&entry.key);
@@ -1284,7 +1256,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Emit escape errors.
-    fn emit_escape_errors(&mut self, text: &Cow<'_, str>, span: Span) {
+    fn emit_escape_errors(&mut self, text: &str, span: Span) {
         for (offset, seq) in validate_escapes(text) {
             let error_start = span.start + offset as u32;
             let error_span = Span::new(error_start, error_start + seq.len() as u32);
@@ -1338,16 +1310,14 @@ enum AtomContent<'src> {
     InvalidEscapeScalar {
         raw_inner: Cow<'src, str>,
     },
-    Error {
-        message: &'static str,
-    },
+    Error,
 }
 
 #[derive(Debug, Clone)]
 struct ObjectEntry<'src> {
     key: Atom<'src>,
     value: Atom<'src>,
-    doc_comment: Option<(Span, &'src str)>,
+    doc_comment: Option<(Span, Vec<&'src str>)>,
     too_many_atoms_span: Option<Span>,
 }
 

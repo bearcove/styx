@@ -511,8 +511,9 @@ impl TreeBuilder {
                 }
             }
 
-            Event::DocComment { text, .. } => {
-                let comment = extract_doc_comment(text);
+            Event::DocComment { lines, .. } => {
+                // Lines are already stripped of `/// ` prefix by the parser
+                let comment = lines.join("\n");
                 match self.stack.last_mut() {
                     Some(BuilderFrame::Object {
                         pending_doc_comment,
@@ -539,14 +540,6 @@ impl TreeBuilder {
 
 fn cow_to_string(cow: Cow<'_, str>) -> String {
     cow.into_owned()
-}
-
-fn extract_doc_comment(text: &str) -> String {
-    // Strip leading `///` and optional space
-    text.strip_prefix("///")
-        .map(|s| s.strip_prefix(' ').unwrap_or(s))
-        .unwrap_or(text)
-        .to_string()
 }
 
 /// Append a doc comment line to an existing doc comment, joining with newline.

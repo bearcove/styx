@@ -2103,7 +2103,6 @@ dependencies = [
  "styx-cst",
  "styx-parse",
  "styx-tree",
- "tracing",
 ]
 
 [[package]]
@@ -2182,7 +2181,6 @@ version = "1.0.0"
 dependencies = [
  "facet",
  "facet-testhelpers",
- "styx-testhelpers",
  "tracing",
 ]
 

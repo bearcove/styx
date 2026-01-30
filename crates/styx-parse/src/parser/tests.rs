@@ -416,6 +416,26 @@ fn test_multiple_doc_comments_before_entry_ok() {
 }
 
 #[test]
+fn test_multiline_doc_comment_in_object() {
+    // Multiple consecutive doc comments inside a braced object should be joined into one event
+    let source = "schema {\n    /// First line\n    /// Second line\n    /// Third line\n    field @string\n}";
+    let events = parse(source);
+    let doc_comments: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::DocComment { lines, .. } => Some(lines.clone()),
+            _ => None,
+        })
+        .collect();
+    // Should be one event with all lines, without the `/// ` prefix
+    assert_eq!(
+        doc_comments,
+        vec![vec!["First line", "Second line", "Third line"]],
+        "consecutive doc comments should be joined into one event"
+    );
+}
+
+#[test]
 fn test_object_with_entries() {
     let events = parse("config {host localhost, port 8080}");
     let keys: Vec<_> = events

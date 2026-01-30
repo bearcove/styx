@@ -328,12 +328,12 @@ impl<'de> StyxParser<'de> {
 
             Event::TagEnd => {
                 // Check if this tag had a payload
-                if let Some(had_payload) = self.tag_has_payload_stack.pop() {
-                    if !had_payload {
-                        // No payload was emitted - this is a unit tag, emit Scalar(Unit)
-                        trace!("convert_event: TagEnd (unit tag) -> Scalar(Unit)");
-                        return Ok(Some(self.event(ParseEventKind::Scalar(ScalarValue::Unit))));
-                    }
+                if let Some(had_payload) = self.tag_has_payload_stack.pop()
+                    && !had_payload
+                {
+                    // No payload was emitted - this is a unit tag, emit Scalar(Unit)
+                    trace!("convert_event: TagEnd (unit tag) -> Scalar(Unit)");
+                    return Ok(Some(self.event(ParseEventKind::Scalar(ScalarValue::Unit))));
                 }
                 // Tag had a payload, TagEnd doesn't need to emit anything
                 Ok(None)
@@ -344,13 +344,13 @@ impl<'de> StyxParser<'de> {
                 Ok(None)
             }
 
-            Event::DocComment { span, text } => {
+            Event::DocComment { span, lines } => {
                 self.current_span = Some(span);
                 // Buffer doc comments for the next field key
-                // Strip the "/// " prefix
-                let text = text.strip_prefix("///").unwrap_or(text);
-                let text = text.strip_prefix(' ').unwrap_or(text);
-                self.pending_doc.push(Cow::Borrowed(text));
+                // Lines are already stripped of `/// ` prefix by the parser
+                for line in lines {
+                    self.pending_doc.push(Cow::Borrowed(line));
+                }
                 Ok(None)
             }
 

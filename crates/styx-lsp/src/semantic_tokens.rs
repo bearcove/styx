@@ -1,6 +1,6 @@
 //! Semantic token computation for syntax highlighting
 
-use styx_cst::{Parse, SyntaxKind, SyntaxNode, SyntaxToken, TextRange, TextSize};
+use styx_cst::{Parse, SyntaxKind, SyntaxNode, SyntaxToken};
 use tower_lsp::lsp_types::*;
 
 /// Semantic token types we support
@@ -161,10 +161,10 @@ fn walk_node_for_spans(node: &SyntaxNode, spans: &mut Vec<HighlightSpan>, ctx: W
                     if token.kind() == SyntaxKind::TAG_TOKEN {
                         add_span_from_syntax(spans, token, TokenType::Type, false);
                     }
-                } else if let Some(child_node) = child.as_node() {
-                    if child_node.kind() == SyntaxKind::TAG_PAYLOAD {
-                        walk_node_for_spans(child_node, spans, ctx);
-                    }
+                } else if let Some(child_node) = child.as_node()
+                    && child_node.kind() == SyntaxKind::TAG_PAYLOAD
+                {
+                    walk_node_for_spans(child_node, spans, ctx);
                 }
             }
         }
@@ -179,7 +179,7 @@ fn walk_node_for_spans(node: &SyntaxNode, spans: &mut Vec<HighlightSpan>, ctx: W
         SyntaxKind::UNIT => {
             for child in node.children_with_tokens() {
                 if let Some(token) = child.as_token()
-                    && token.kind() == SyntaxKind::TAG_TOKEN
+                    && (token.kind() == SyntaxKind::TAG_TOKEN || token.kind() == SyntaxKind::AT)
                 {
                     add_span_from_syntax(spans, token, TokenType::Type, false);
                 }
@@ -272,7 +272,8 @@ fn collect_key_spans(node: &SyntaxNode, spans: &mut Vec<HighlightSpan>) {
                 SyntaxKind::UNIT => {
                     for t in child_node.children_with_tokens() {
                         if let Some(token) = t.as_token()
-                            && token.kind() == SyntaxKind::TAG_TOKEN
+                            && (token.kind() == SyntaxKind::TAG_TOKEN
+                                || token.kind() == SyntaxKind::AT)
                         {
                             add_span_from_syntax(spans, token, TokenType::Type, false);
                         }
@@ -304,7 +305,8 @@ fn collect_key_spans_as_values(node: &SyntaxNode, spans: &mut Vec<HighlightSpan>
                 SyntaxKind::UNIT => {
                     for t in child_node.children_with_tokens() {
                         if let Some(token) = t.as_token()
-                            && token.kind() == SyntaxKind::TAG_TOKEN
+                            && (token.kind() == SyntaxKind::TAG_TOKEN
+                                || token.kind() == SyntaxKind::AT)
                         {
                             add_span_from_syntax(spans, token, TokenType::Type, false);
                         }
@@ -360,11 +362,11 @@ fn walk_node(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToken>, ctx: 
                     if token.kind() == SyntaxKind::TAG_TOKEN {
                         add_token_from_syntax(tokens, content, token, TokenType::Type, 0);
                     }
-                } else if let Some(child_node) = child.as_node() {
-                    if child_node.kind() == SyntaxKind::TAG_PAYLOAD {
-                        // Recurse into payload
-                        walk_node(child_node, content, tokens, ctx);
-                    }
+                } else if let Some(child_node) = child.as_node()
+                    && child_node.kind() == SyntaxKind::TAG_PAYLOAD
+                {
+                    // Recurse into payload
+                    walk_node(child_node, content, tokens, ctx);
                 }
             }
         }
@@ -381,7 +383,7 @@ fn walk_node(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToken>, ctx: 
             // Unit @ token
             for child in node.children_with_tokens() {
                 if let Some(token) = child.as_token()
-                    && token.kind() == SyntaxKind::TAG_TOKEN
+                    && (token.kind() == SyntaxKind::TAG_TOKEN || token.kind() == SyntaxKind::AT)
                 {
                     add_token_from_syntax(tokens, content, token, TokenType::Type, 0);
                 }
@@ -1123,8 +1125,8 @@ HTML
         let types = filter_by_type(&tokens, TokenType::Type);
         let operators = filter_by_type(&tokens, TokenType::Operator);
 
-        assert_eq!(types.len(), 1); // "html"
-        assert!(operators.len() >= 3); // @, <<HTML, HTML
+        assert_eq!(types.len(), 1); // "@html"
+        assert!(operators.len() >= 2); // <<HTML, HTML
     }
 
     #[test]

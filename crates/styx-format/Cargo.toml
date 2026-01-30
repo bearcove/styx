@@ -16,10 +16,7 @@ styx-cst.workspace = true
 styx-parse.workspace = true
 styx-tree.workspace = true
 
-tracing = { workspace = true }
-
 [dev-dependencies]
-tracing.workspace = true
 insta = "1"
 proptest.workspace = true
 
