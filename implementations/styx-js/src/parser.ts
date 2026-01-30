@@ -600,12 +600,7 @@ export class Parser {
     const openBrace = this.expect("lbrace");
     const start = openBrace.span.start;
     const entries: Entry[] = [];
-    let separator: Separator | null = null;
     const seenKeys = new Map<string, Span>();
-
-    if (this.current.hadNewlineBefore) {
-      separator = "newline";
-    }
 
     while (!this.check("rbrace", "eof")) {
       const entry = this.parseEntryWithDupCheck(seenKeys);
@@ -613,28 +608,10 @@ export class Parser {
         entries.push(entry);
       }
 
+      // Skip commas (mixed separators now allowed)
       if (this.check("comma")) {
-        if (separator === "newline") {
-          throw new ParseError(
-            "mixed separators (use either commas or newlines)",
-            this.current.span,
-          );
-        }
-        separator = "comma";
         this.advance();
-      } else if (!this.check("rbrace", "eof")) {
-        if (separator === "comma") {
-          throw new ParseError(
-            "mixed separators (use either commas or newlines)",
-            this.current.span,
-          );
-        }
-        separator = "newline";
       }
-    }
-
-    if (separator === null) {
-      separator = "comma";
     }
 
     if (this.check("eof")) {
@@ -645,7 +622,6 @@ export class Parser {
     return {
       type: "object",
       entries,
-      separator,
       span: { start, end },
     };
   }

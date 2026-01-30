@@ -10,7 +10,6 @@ from .types import (
     PathValueKind,
     Scalar,
     ScalarKind,
-    Separator,
     Sequence,
     Span,
     StyxObject,
@@ -299,7 +298,6 @@ class Parser:
                 span=obj_span,
                 payload=StyxObject(
                     entries=[Entry(key=segment_key, value=result)],
-                    separator=Separator.NEWLINE,
                     span=obj_span,
                 ),
             )
@@ -344,7 +342,6 @@ class Parser:
                 span=span,
                 payload=StyxObject(
                     entries=[Entry(key=segment_key, value=result)],
-                    separator=Separator.NEWLINE,
                     span=span,
                 ),
             )
@@ -499,7 +496,6 @@ class Parser:
 
         obj = StyxObject(
             entries=attrs,
-            separator=Separator.COMMA,
             span=Span(start_span.start, end_span.end),
         )
 
@@ -529,41 +525,22 @@ class Parser:
         open_brace = self._expect(TokenType.LBRACE)
         start = open_brace.span.start
         entries: list[Entry] = []
-        separator: Separator | None = None
         seen_keys: dict[str, Span] = {}
-
-        if self.current.had_newline_before:
-            separator = Separator.NEWLINE
 
         while not self._check(TokenType.RBRACE, TokenType.EOF):
             entry = self._parse_entry_with_dup_check(seen_keys)
             if entry:
                 entries.append(entry)
 
+            # Skip commas (mixed separators now allowed)
             if self._check(TokenType.COMMA):
-                if separator == Separator.NEWLINE:
-                    raise ParseError(
-                        "mixed separators (use either commas or newlines)",
-                        self.current.span,
-                    )
-                separator = Separator.COMMA
                 self._advance()
-            elif not self._check(TokenType.RBRACE, TokenType.EOF):
-                if separator == Separator.COMMA:
-                    raise ParseError(
-                        "mixed separators (use either commas or newlines)",
-                        self.current.span,
-                    )
-                separator = Separator.NEWLINE
-
-        if separator is None:
-            separator = Separator.COMMA
 
         if self._check(TokenType.EOF):
             raise ParseError("unclosed object (missing `}`)", open_brace.span)
 
         end = self._expect(TokenType.RBRACE).span.end
-        return StyxObject(entries=entries, separator=separator, span=Span(start, end))
+        return StyxObject(entries=entries, span=Span(start, end))
 
     def _parse_sequence(self) -> Sequence:
         """Parse a sequence."""
