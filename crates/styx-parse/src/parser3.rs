@@ -351,6 +351,8 @@ enum Context {
         seen_keys: std::collections::HashMap<String, Span>,
         /// If true, this object is a tag payload and needs TagEnd emitted after ObjectEnd.
         is_tag_payload: bool,
+        /// If true, at least one entry has been started in this object.
+        has_entries: bool,
     },
     /// Inside a sequence. `is_tag_payload` indicates this is a tag payload.
     Sequence { is_tag_payload: bool },
@@ -722,6 +724,7 @@ impl<'src> Parser3<'src> {
                         separator: SeparatorStyle::Unknown,
                         seen_keys: std::collections::HashMap::new(),
                         is_tag_payload: false,
+                        has_entries: false,
                     });
                     self.state = State::ExpectEntry;
                     return Some(Event::DocumentStart);
@@ -735,6 +738,7 @@ impl<'src> Parser3<'src> {
                         separator: SeparatorStyle::Unknown,
                         seen_keys: std::collections::HashMap::new(),
                         is_tag_payload: false,
+                        has_entries: false,
                     });
                     self.state = State::ExpectEntry;
                     return Some(Event::ObjectStart {
@@ -773,6 +777,7 @@ impl<'src> Parser3<'src> {
                                 separator: SeparatorStyle::Unknown,
                                 seen_keys: std::collections::HashMap::new(),
                                 is_tag_payload: false,
+                                has_entries: false,
                             });
                             self.state = State::ExpectEntry;
                             return Some(Event::ObjectStart {
@@ -896,6 +901,7 @@ impl<'src> Parser3<'src> {
                                     separator,
                                     seen_keys,
                                     is_tag_payload,
+                                    has_entries,
                                 }) => {
                                     // Can't close implicit root with }
                                     self.context_stack.push(Context::Object {
@@ -903,6 +909,7 @@ impl<'src> Parser3<'src> {
                                         separator,
                                         seen_keys,
                                         is_tag_payload,
+                                        has_entries,
                                     });
                                     self.state = State::ExpectEntry;
                                     return Some(Event::Error {
@@ -975,7 +982,7 @@ impl<'src> Parser3<'src> {
                             match self.context_stack.last() {
                                 Some(Context::Object {
                                     implicit: true,
-                                    separator: SeparatorStyle::Unknown,
+                                    has_entries: false,
                                     ..
                                 }) => {
                                     // Replace implicit root with explicit root
@@ -985,6 +992,7 @@ impl<'src> Parser3<'src> {
                                         separator: SeparatorStyle::Unknown,
                                         seen_keys: std::collections::HashMap::new(),
                                         is_tag_payload: false,
+                                        has_entries: false,
                                     });
                                     self.state = State::ExpectEntry;
                                     return Some(Event::ObjectStart {
@@ -1003,6 +1011,11 @@ impl<'src> Parser3<'src> {
 
                         TokenKind::At => {
                             // @ as a unit key - emit Key with no payload
+                            if let Some(Context::Object { has_entries, .. }) =
+                                self.context_stack.last_mut()
+                            {
+                                *has_entries = true;
+                            }
                             self.state = State::EmitUnitKeyValue { at_span: t.span };
                             return Some(Event::EntryStart);
                         }
@@ -1126,7 +1139,7 @@ impl<'src> Parser3<'src> {
                                     match self.context_stack.last() {
                                         Some(Context::Object {
                                             implicit: true,
-                                            separator: SeparatorStyle::Unknown,
+                                            has_entries: false,
                                             ..
                                         }) => {
                                             self.context_stack.pop();
@@ -1135,6 +1148,7 @@ impl<'src> Parser3<'src> {
                                                 separator: SeparatorStyle::Unknown,
                                                 seen_keys: std::collections::HashMap::new(),
                                                 is_tag_payload: false,
+                                                has_entries: false,
                                             });
                                             self.state = State::ExpectEntry;
                                             // Emit doc comment, then will emit ObjectStart
@@ -1225,6 +1239,11 @@ impl<'src> Parser3<'src> {
                             };
                             continue;
                         }
+                    }
+                    // Mark that we've started an entry in the current object
+                    if let Some(Context::Object { has_entries, .. }) = self.context_stack.last_mut()
+                    {
+                        *has_entries = true;
                     }
                     self.state = State::EmitKey { key_span, key_kind };
                     return Some(Event::EntryStart);
@@ -2096,6 +2115,11 @@ impl<'src> Parser3<'src> {
                         });
                     } else {
                         // All errors emitted, continue to emit EntryStart and Key
+                        if let Some(Context::Object { has_entries, .. }) =
+                            self.context_stack.last_mut()
+                        {
+                            *has_entries = true;
+                        }
                         self.state = State::EmitKey { key_span, key_kind };
                         return Some(Event::EntryStart);
                     }
@@ -2342,6 +2366,7 @@ impl<'src> Parser3<'src> {
                         separator: SeparatorStyle::Unknown,
                         seen_keys: std::collections::HashMap::new(),
                         is_tag_payload: false,
+                        has_entries: false,
                     });
                     self.state = State::ExpectEntry;
                     return Some(Event::ObjectStart {
@@ -2433,6 +2458,7 @@ impl<'src> Parser3<'src> {
                                 separator: SeparatorStyle::Unknown,
                                 seen_keys: std::collections::HashMap::new(),
                                 is_tag_payload: true,
+                                has_entries: false,
                             });
                             self.state = State::ExpectEntry;
                             return Some(Event::ObjectStart {
@@ -2710,6 +2736,7 @@ impl<'src> Parser3<'src> {
                                 separator: SeparatorStyle::Unknown,
                                 seen_keys: std::collections::HashMap::new(),
                                 is_tag_payload: false,
+                                has_entries: false,
                             });
                             self.state = State::ExpectEntry;
                             return Some(Event::ObjectStart {
@@ -2876,6 +2903,11 @@ impl<'src> Parser3<'src> {
 
                     if is_last {
                         // Last segment - emit EntryStart and Key, then read value
+                        if let Some(Context::Object { has_entries, .. }) =
+                            self.context_stack.last_mut()
+                        {
+                            *has_entries = true;
+                        }
                         self.state = State::EmitDottedPathKey {
                             key_span: segment_span,
                             full_span,
@@ -2884,6 +2916,11 @@ impl<'src> Parser3<'src> {
                         return Some(Event::EntryStart);
                     } else {
                         // Not last - emit EntryStart, Key, ObjectStart, continue
+                        if let Some(Context::Object { has_entries, .. }) =
+                            self.context_stack.last_mut()
+                        {
+                            *has_entries = true;
+                        }
                         self.state = State::EmitDottedPathKeyThenObject {
                             key_span: segment_span,
                             full_span,
@@ -2945,6 +2982,7 @@ impl<'src> Parser3<'src> {
                         separator: SeparatorStyle::Unknown,
                         seen_keys: std::collections::HashMap::new(),
                         is_tag_payload: false,
+                        has_entries: false,
                     });
                     self.state = State::EmitDottedPath {
                         full_span,
@@ -2993,6 +3031,7 @@ impl<'src> Parser3<'src> {
                                 separator: SeparatorStyle::Unknown,
                                 seen_keys: std::collections::HashMap::new(),
                                 is_tag_payload: false,
+                                has_entries: false,
                             });
                             self.state = State::ExpectEntry;
                             return Some(Event::ObjectStart {
@@ -3136,6 +3175,7 @@ impl<'src> Parser3<'src> {
                                 separator: SeparatorStyle::Unknown,
                                 seen_keys: std::collections::HashMap::new(),
                                 is_tag_payload: false,
+                                has_entries: false,
                             });
                             self.state = State::ExpectEntry;
                             return Some(Event::ObjectStart {
@@ -3275,6 +3315,7 @@ impl<'src> Parser3<'src> {
                                 separator: SeparatorStyle::Unknown,
                                 seen_keys: std::collections::HashMap::new(),
                                 is_tag_payload: true,
+                                has_entries: false,
                             });
                             self.state = State::ExpectEntry;
                             return Some(Event::ObjectStart {
@@ -3436,6 +3477,7 @@ impl<'src> Parser3<'src> {
                                 separator: SeparatorStyle::Unknown,
                                 seen_keys: std::collections::HashMap::new(),
                                 is_tag_payload: false,
+                                has_entries: false,
                             });
                             self.state = State::ExpectEntry;
                             return Some(Event::ObjectStart {
@@ -3522,6 +3564,7 @@ impl<'src> Parser3<'src> {
                                 separator: SeparatorStyle::Unknown,
                                 seen_keys: std::collections::HashMap::new(),
                                 is_tag_payload: false,
+                                has_entries: false,
                             });
                             self.state = State::ExpectEntry;
                             return Some(Event::ObjectStart {

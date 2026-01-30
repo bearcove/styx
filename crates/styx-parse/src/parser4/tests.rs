@@ -5,11 +5,11 @@ use facet_testhelpers::test;
 use styx_testhelpers::{ActualError, assert_annotated_errors, source_without_annotations};
 
 fn parse(source: &str) -> Vec<Event<'_>> {
-    Parser3::new(source).parse_to_vec()
+    Parser4::new(source).parse_to_vec()
 }
 
 fn parse_expr(source: &str) -> Vec<Event<'_>> {
-    Parser3::new_expr(source).parse_to_vec()
+    todo!()
 }
 
 fn error_kind_name(kind: &ParseErrorKind) -> &'static str {
