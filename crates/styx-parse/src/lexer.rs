@@ -71,7 +71,6 @@ pub enum Lexeme<'src> {
 /// Lexer that produces lexemes from tokens.
 #[derive(Clone)]
 pub struct Lexer<'src> {
-    source: &'src str,
     tokenizer: Tokenizer<'src>,
     /// Peeked token (if any)
     peeked: Option<crate::Token<'src>>,
@@ -81,7 +80,6 @@ impl<'src> Lexer<'src> {
     /// Create a new lexer for the given source.
     pub fn new(source: &'src str) -> Self {
         Self {
-            source,
             tokenizer: Tokenizer::new(source),
             peeked: None,
         }
@@ -244,7 +242,7 @@ impl<'src> Lexer<'src> {
                 // Collect heredoc content
                 let start_span = tok.span;
                 let mut content = String::new();
-                let mut end_span = tok.span;
+                let end_span;
 
                 loop {
                     let next = self.next_token();

@@ -9,7 +9,7 @@ fn parse(source: &str) -> Vec<Event<'_>> {
     Parser4::new(source).parse_to_vec()
 }
 
-fn parse_expr(source: &str) -> Vec<Event<'_>> {
+fn parse_expr(_source: &str) -> Vec<Event<'_>> {
     todo!()
 }
 

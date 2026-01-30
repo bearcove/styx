@@ -4,20 +4,22 @@ use crate::lexer::Lexer;
 #[allow(unused_imports)]
 use crate::trace;
 
-/// Parser state machine.
+/// Parser frame for tracking nested structures.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 struct Frame {
-    // can add some fields here
     kind: FrameKind,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 enum FrameKind {
     Object {},
     Seq {},
-    // etc.
 }
 
+/// Frame-based pull parser for Styx.
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct Parser4<'src> {
     input: &'src str,

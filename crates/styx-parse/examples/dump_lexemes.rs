@@ -1,17 +1,17 @@
-use styx_parse::Lexer;
+use std::io::Read;
+use styx_parse::{Lexer, Tokenizer};
 
 fn main() {
-    let source = r#"server {
-    host localhost
-    port 8080
-}
-tags (web prod @env"staging")
-config name>app @flag
-a.b.c value
-@tag{x 1}
-"#;
+    let mut source = String::new();
+    std::io::stdin().read_to_string(&mut source).unwrap();
 
-    for lex in Lexer::new(source) {
+    println!("=== Tokens ===");
+    for tok in Tokenizer::new(&source) {
+        println!("{:?}", tok);
+    }
+
+    println!("\n=== Lexemes ===");
+    for lex in Lexer::new(&source) {
         println!("{:?}", lex);
     }
 }
