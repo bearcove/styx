@@ -795,8 +795,17 @@ impl<'src> Parser2<'src> {
 
             TokenKind::At => {
                 let ev = self.parse_tag_value(t);
-                // parse_tag_value sets state to AfterTagBoundaryConsumed if it consumed a boundary
-                if !matches!(self.state, State::AfterTagBoundaryConsumed { .. }) {
+                // parse_tag_value sets state appropriately:
+                // - AfterTagBoundaryConsumed if it consumed a boundary
+                // - ExpectSeqElem if the tag has a sequence payload
+                // - ExpectEntry if the tag has an object payload
+                // Only set AfterValue if parse_tag_value didn't set a specific state
+                if !matches!(
+                    self.state,
+                    State::AfterTagBoundaryConsumed { .. }
+                        | State::ExpectSeqElem
+                        | State::ExpectEntry
+                ) {
                     self.state = State::AfterValue;
                 }
                 Some(ev)
@@ -955,7 +964,12 @@ impl<'src> Parser2<'src> {
 
             TokenKind::At => {
                 let ev = self.parse_tag_value(t);
-                if !matches!(self.state, State::AfterTagBoundaryConsumed { .. }) {
+                if !matches!(
+                    self.state,
+                    State::AfterTagBoundaryConsumed { .. }
+                        | State::ExpectSeqElem
+                        | State::ExpectEntry
+                ) {
                     self.state = State::AfterValue;
                 }
                 Some(ev)
@@ -1007,8 +1021,12 @@ impl<'src> Parser2<'src> {
 
             TokenKind::At => {
                 let ev = self.parse_tag_value(t);
-                // parse_tag_value sets state to AfterTagBoundaryConsumed if it consumed a boundary
-                if !matches!(self.state, State::AfterTagBoundaryConsumed { .. }) {
+                if !matches!(
+                    self.state,
+                    State::AfterTagBoundaryConsumed { .. }
+                        | State::ExpectSeqElem
+                        | State::ExpectEntry
+                ) {
                     self.state = State::AfterValue;
                 }
                 Some(ev)
@@ -1782,9 +1800,17 @@ impl<'src> Parser2<'src> {
         span: Span,
     ) -> Option<Event<'src>> {
         // We already consumed a boundary token after a tag value.
-        // Emit EntryEnd and handle the boundary.
-        self.event_queue.push_back(Event::EntryEnd);
-        self.state = State::ExpectEntry;
+        // What we do depends on whether we're in an object or sequence context.
+        let in_sequence = matches!(self.context_stack.last(), Some(Context::Sequence { .. }));
+
+        if !in_sequence {
+            // In object context: emit EntryEnd and handle the boundary
+            self.event_queue.push_back(Event::EntryEnd);
+            self.state = State::ExpectEntry;
+        } else {
+            // In sequence context: just continue to next element
+            self.state = State::ExpectSeqElem;
+        }
 
         match kind {
             TokenKind::Newline | TokenKind::Comma => {
@@ -1793,10 +1819,22 @@ impl<'src> Parser2<'src> {
             }
             TokenKind::Eof => self.close_at_eof(),
             TokenKind::RBrace => self.handle_rbrace(span),
-            TokenKind::RParen => Some(Event::Error {
-                span,
-                kind: ParseErrorKind::UnexpectedToken,
-            }),
+            TokenKind::RParen => {
+                if in_sequence {
+                    // Close the sequence
+                    let (_, needs_tag_end) = self.pop_context();
+                    if needs_tag_end {
+                        self.event_queue.push_back(Event::TagEnd);
+                    }
+                    self.state = self.state_after_close();
+                    Some(Event::SequenceEnd { span })
+                } else {
+                    Some(Event::Error {
+                        span,
+                        kind: ParseErrorKind::UnexpectedToken,
+                    })
+                }
+            }
             _ => None, // Shouldn't happen
         }
     }
@@ -2090,7 +2128,12 @@ impl<'src> Parser2<'src> {
 
             TokenKind::At => {
                 let ev = self.parse_tag_value(t);
-                if !matches!(self.state, State::AfterTagBoundaryConsumed { .. }) {
+                if !matches!(
+                    self.state,
+                    State::AfterTagBoundaryConsumed { .. }
+                        | State::ExpectSeqElem
+                        | State::ExpectEntry
+                ) {
                     self.state = State::AfterValue;
                 }
                 Some(ev)
@@ -3493,6 +3536,22 @@ schema {
         name @optional(@string)
     }
 }"#;
+        let events = parse(input);
+        for (i, e) in events.iter().enumerate() {
+            eprintln!("{i}: {e:?}");
+        }
+        // Check no errors
+        let errors: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, Event::Error { .. }))
+            .collect();
+        assert!(errors.is_empty(), "Unexpected errors: {:?}", errors);
+    }
+
+    #[test]
+    fn test_tag_with_seq_containing_tag() {
+        // Simple case: tag with sequence payload containing another tag
+        let input = "x @outer(@inner)";
         let events = parse(input);
         for (i, e) in events.iter().enumerate() {
             eprintln!("{i}: {e:?}");
