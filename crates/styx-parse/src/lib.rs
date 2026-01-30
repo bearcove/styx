@@ -24,6 +24,7 @@ pub mod event;
 mod lexer;
 pub mod parser;
 pub mod parser2;
+pub mod parser3;
 mod span;
 mod token;
 
