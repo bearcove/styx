@@ -191,26 +191,36 @@ function annotateSpan(source: string, start: number, end: number, msg: string): 
     end = source.length;
   }
 
-  // Find line containing start
-  let lineStart = start;
-  while (lineStart > 0 && source[lineStart - 1] !== "\n") {
-    lineStart--;
-  }
-  let lineEnd = start;
-  while (lineEnd < source.length && source[lineEnd] !== "\n") {
-    lineEnd++;
+  // Find all lines that overlap with the span
+  const lines: { text: string; lineStart: number; lineEnd: number }[] = [];
+  let pos = 0;
+  for (const lineText of source.split("\n")) {
+    const lineStart = pos;
+    const lineEnd = pos + lineText.length;
+    // Check if this line overlaps with [start, end)
+    if (lineEnd >= start && lineStart < end) {
+      lines.push({ text: lineText, lineStart, lineEnd });
+    }
+    pos = lineEnd + 1; // +1 for the newline
+    if (lineStart >= end) break;
   }
 
-  const line = source.slice(lineStart, lineEnd);
-  const col = start - lineStart;
-  let width = end - start;
-  if (width < 1) width = 1;
-  if (col + width > line.length) {
-    width = line.length - col;
+  if (lines.length === 0) {
+    return `  [span ${start}-${end} not found]\n`;
+  }
+
+  let result = "";
+  for (const { text, lineStart, lineEnd } of lines) {
+    result += `  ${text}\n`;
+    // Calculate caret positions for this line
+    const caretStart = Math.max(start, lineStart) - lineStart;
+    const caretEnd = Math.min(end, lineEnd) - lineStart;
+    let width = caretEnd - caretStart;
     if (width < 1) width = 1;
+    result += `  ${" ".repeat(caretStart)}${"^".repeat(width)}\n`;
   }
-
-  return `  ${line}\n  ${" ".repeat(col)}${"^".repeat(width)} ${msg} (${start}-${end})\n`;
+  result += `  ${msg} (${start}-${end})\n`;
+  return result;
 }
 
 function annotateErrorDiff(source: string, jsOutput: string, rustOutput: string): string {

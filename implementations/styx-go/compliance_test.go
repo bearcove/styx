@@ -161,7 +161,7 @@ func parseErrorSpan(output string) ([]int, string) {
 	return []int{start, end}, m[3]
 }
 
-// annotateSpan shows source with carets under the error span
+// annotateSpan shows source with carets under the error span, handling multi-line spans
 func annotateSpan(source string, start, end int, msg string) string {
 	if start < 0 || end < 0 || start > len(source) {
 		return fmt.Sprintf("  [invalid span %d-%d]\n", start, end)
@@ -170,39 +170,54 @@ func annotateSpan(source string, start, end int, msg string) string {
 		end = len(source)
 	}
 
-	// Find line containing start
-	lineStart := start
-	for lineStart > 0 && source[lineStart-1] != '\n' {
-		lineStart--
+	// Find all lines that overlap with the span
+	type lineInfo struct {
+		text      string
+		lineStart int
+		lineEnd   int
 	}
-	lineEnd := start
-	for lineEnd < len(source) && source[lineEnd] != '\n' {
-		lineEnd++
-	}
-
-	line := source[lineStart:lineEnd]
-	col := start - lineStart
-	width := end - start
-	if width < 1 {
-		width = 1
-	}
-	if col+width > len(line) {
-		width = len(line) - col
-		if width < 1 {
-			width = 1
+	var lines []lineInfo
+	pos := 0
+	for _, lineText := range strings.Split(source, "\n") {
+		lineStart := pos
+		lineEnd := pos + len(lineText)
+		// Check if this line overlaps with [start, end)
+		if lineEnd >= start && lineStart < end {
+			lines = append(lines, lineInfo{lineText, lineStart, lineEnd})
+		}
+		pos = lineEnd + 1 // +1 for the newline
+		if lineStart >= end {
+			break
 		}
 	}
 
+	if len(lines) == 0 {
+		return fmt.Sprintf("  [span %d-%d not found]\n", start, end)
+	}
+
 	var sb strings.Builder
-	sb.WriteString("  ")
-	sb.WriteString(line)
-	sb.WriteString("\n  ")
-	sb.WriteString(strings.Repeat(" ", col))
-	sb.WriteString(strings.Repeat("^", width))
-	sb.WriteString(" ")
-	sb.WriteString(msg)
-	sb.WriteString(fmt.Sprintf(" (%d-%d)", start, end))
-	sb.WriteString("\n")
+	for _, li := range lines {
+		sb.WriteString("  ")
+		sb.WriteString(li.text)
+		sb.WriteString("\n  ")
+		// Calculate caret positions for this line
+		caretStart := start - li.lineStart
+		if caretStart < 0 {
+			caretStart = 0
+		}
+		caretEnd := end - li.lineStart
+		if caretEnd > len(li.text) {
+			caretEnd = len(li.text)
+		}
+		width := caretEnd - caretStart
+		if width < 1 {
+			width = 1
+		}
+		sb.WriteString(strings.Repeat(" ", caretStart))
+		sb.WriteString(strings.Repeat("^", width))
+		sb.WriteString("\n")
+	}
+	sb.WriteString(fmt.Sprintf("  %s (%d-%d)\n", msg, start, end))
 	return sb.String()
 }
 

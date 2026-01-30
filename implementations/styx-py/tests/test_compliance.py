@@ -96,31 +96,40 @@ def parse_error_span(output: str) -> tuple[tuple[int, int] | None, str]:
 
 
 def annotate_span(source: str, start: int, end: int, msg: str) -> str:
-    """Show source with carets under the error span."""
+    """Show source with carets under the error span, handling multi-line spans."""
     if start < 0 or end < 0 or start > len(source):
         return f"  [invalid span {start}-{end}]\n"
     if end > len(source):
         end = len(source)
 
-    # Find line containing start
-    line_start = start
-    while line_start > 0 and source[line_start - 1] != "\n":
-        line_start -= 1
-    line_end = start
-    while line_end < len(source) and source[line_end] != "\n":
-        line_end += 1
+    # Find all lines that overlap with the span
+    lines = []
+    pos = 0
+    for line_text in source.split("\n"):
+        line_start = pos
+        line_end = pos + len(line_text)
+        # Check if this line overlaps with [start, end)
+        if line_end >= start and line_start < end:
+            lines.append((line_text, line_start, line_end))
+        pos = line_end + 1  # +1 for the newline
+        if line_start >= end:
+            break
 
-    line = source[line_start:line_end]
-    col = start - line_start
-    width = end - start
-    if width < 1:
-        width = 1
-    if col + width > len(line):
-        width = len(line) - col
+    if not lines:
+        return f"  [span {start}-{end} not found]\n"
+
+    result = []
+    for line_text, line_start, line_end in lines:
+        result.append(f"  {line_text}\n")
+        # Calculate caret positions for this line
+        caret_start = max(start, line_start) - line_start
+        caret_end = min(end, line_end) - line_start
+        width = caret_end - caret_start
         if width < 1:
             width = 1
-
-    return f"  {line}\n  {' ' * col}{'^' * width} {msg} ({start}-{end})\n"
+        result.append(f"  {' ' * caret_start}{'^' * width}\n")
+    result.append(f"  {msg} ({start}-{end})\n")
+    return "".join(result)
 
 
 def annotate_error_diff(source: str, py_output: str, rust_output: str) -> str:

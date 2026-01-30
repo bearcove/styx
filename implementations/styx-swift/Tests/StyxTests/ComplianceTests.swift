@@ -248,33 +248,46 @@ final class ComplianceTests: XCTestCase {
         }
         let effectiveEnd = min(end, source.utf8.count)
 
-        // Convert byte offsets to string indices
-        let utf8 = Array(source.utf8)
-        guard start < utf8.count else {
-            return "  [span \(start)-\(end) out of bounds]\n"
+        // Find all lines that overlap with the span
+        struct LineInfo {
+            let text: String
+            let lineStart: Int
+            let lineEnd: Int
+        }
+        var lines: [LineInfo] = []
+        var pos = 0
+        for lineText in source.split(separator: "\n", omittingEmptySubsequences: false).map({
+            String($0)
+        }) {
+            let lineStart = pos
+            let lineEnd = pos + lineText.utf8.count
+            // Check if this line overlaps with [start, end)
+            if lineEnd >= start && lineStart < effectiveEnd {
+                lines.append(LineInfo(text: lineText, lineStart: lineStart, lineEnd: lineEnd))
+            }
+            pos = lineEnd + 1  // +1 for the newline
+            if lineStart >= effectiveEnd {
+                break
+            }
         }
 
-        // Find line containing start
-        var lineStart = start
-        while lineStart > 0 && utf8[lineStart - 1] != UInt8(ascii: "\n") {
-            lineStart -= 1
-        }
-        var lineEnd = start
-        while lineEnd < utf8.count && utf8[lineEnd] != UInt8(ascii: "\n") {
-            lineEnd += 1
+        if lines.isEmpty {
+            return "  [span \(start)-\(end) not found]\n"
         }
 
-        let lineBytes = Array(utf8[lineStart..<lineEnd])
-        let line = String(decoding: lineBytes, as: UTF8.self)
-        let col = start - lineStart
-        var width = effectiveEnd - start
-        if width < 1 { width = 1 }
-        if col + width > line.count {
-            width = max(1, line.count - col)
+        var result = ""
+        for li in lines {
+            result += "  \(li.text)\n"
+            // Calculate caret positions for this line
+            let caretStart = max(start, li.lineStart) - li.lineStart
+            let caretEnd = min(effectiveEnd, li.lineEnd) - li.lineStart
+            var width = caretEnd - caretStart
+            if width < 1 { width = 1 }
+            let spaces = String(repeating: " ", count: caretStart)
+            let carets = String(repeating: "^", count: width)
+            result += "  \(spaces)\(carets)\n"
         }
-
-        let spaces = String(repeating: " ", count: col)
-        let carets = String(repeating: "^", count: width)
-        return "  \(line)\n  \(spaces)\(carets) \(msg) (\(start)-\(end))\n"
+        result += "  \(msg) (\(start)-\(end))\n"
+        return result
     }
 }
