@@ -104,13 +104,14 @@ func (ps *pathState) checkAndUpdate(path []string, span Span, kind pathValueKind
 
 type parser struct {
 	lexer   *Lexer
+	source  string
 	current *Token
 	peeked  *Token
 	err     error
 }
 
 func newParser(source string) *parser {
-	p := &parser{lexer: newLexer(source)}
+	p := &parser{lexer: newLexer(source), source: source}
 	tok, err := p.lexer.nextToken()
 	if err != nil {
 		p.err = err
@@ -343,9 +344,22 @@ func (p *parser) validateKey(key *Value) error {
 		return &ParseError{Message: "invalid key", Span: key.Span}
 	}
 	if key.PayloadKind == PayloadScalar && key.Scalar.Kind == ScalarHeredoc {
-		return &ParseError{Message: "invalid key", Span: key.Span}
+		// Point at just the opening marker (<<TAG), not the whole content
+		errorSpan := p.heredocStartSpan(key.Scalar.Span)
+		return &ParseError{Message: "invalid key", Span: errorSpan}
 	}
 	return nil
+}
+
+// heredocStartSpan returns the span of just the heredoc opening marker (<<TAG\n).
+func (p *parser) heredocStartSpan(heredocSpan Span) Span {
+	text := p.source[heredocSpan.Start:heredocSpan.End]
+	newlineIdx := strings.Index(text, "\n")
+	endOffset := len(text)
+	if newlineIdx >= 0 {
+		endOffset = newlineIdx + 1
+	}
+	return Span{Start: heredocSpan.Start, End: heredocSpan.Start + endOffset}
 }
 
 func (p *parser) expandDottedPathWithState(pathText string, span Span, ps *pathState) (*Entry, error) {
@@ -455,10 +469,10 @@ func (p *parser) parseTagValue() (*Value, error) {
 		if p.check(TokenScalar) {
 			// There's a scalar immediately after the tag without whitespace
 			// This means there was a character that broke the tag name (like /)
-			// Error span starts after the @ (at the tag name) and ends at the invalid scalar
+			// Error span starts at the @ and ends at the invalid scalar
 			return nil, &ParseError{
 				Message: "invalid tag name",
-				Span:    Span{start + 1, p.current.Span.End},
+				Span:    Span{start, p.current.Span.End},
 			}
 		}
 		if p.check(TokenLBrace) {

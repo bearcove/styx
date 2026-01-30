@@ -76,10 +76,12 @@ private struct PathState {
 /// Parser for Styx documents.
 public struct Parser {
     private var lexer: Lexer
+    private var source: String
     private var current: Token
     private var previous: Token
 
     public init(source: String) {
+        self.source = source
         self.lexer = Lexer(source: source)
         let first = lexer.nextToken()
         self.current = first
@@ -229,7 +231,9 @@ public struct Parser {
         case .scalar(let scalar):
             // Heredocs are not valid keys
             if scalar.kind == .heredoc {
-                throw ParseError(message: "invalid key", span: key.span)
+                // Point at just the opening marker (<<TAG), not the whole content
+                let errorSpan = heredocStartSpan(scalar.span)
+                throw ParseError(message: "invalid key", span: errorSpan)
             }
         case .object(_):
             // Objects at key position are OK - they become the value of an implicit unit key
@@ -242,6 +246,18 @@ public struct Parser {
             // Unit value is OK as a key (e.g., @tag or just @)
             break
         }
+    }
+
+    /// Get the span of just the heredoc opening marker (<<TAG\n).
+    private func heredocStartSpan(_ heredocSpan: Span) -> Span {
+        let startIndex = source.utf8.index(source.utf8.startIndex, offsetBy: heredocSpan.start)
+        let endIndex = source.utf8.index(source.utf8.startIndex, offsetBy: heredocSpan.end)
+        let text = String(source[startIndex..<endIndex])
+        if let newlineIdx = text.firstIndex(of: "\n") {
+            let endOffset = text.utf8.distance(from: text.startIndex, to: newlineIdx) + 1
+            return Span(start: heredocSpan.start, end: heredocSpan.start + endOffset)
+        }
+        return heredocSpan
     }
 
     private mutating func parseDottedPathEntry(
@@ -379,12 +395,15 @@ public struct Parser {
         }
         if let firstChar = tagName.first {
             if firstChar.isNumber || firstChar == "-" {
+                // Invalid first character - error span is just the tag name (not @)
                 throw ParseError(message: "invalid tag name", span: nameToken.span)
             }
         }
         for char in tagName {
             if !(char.isLetter || char.isNumber || char == "-" || char == "_") {
-                throw ParseError(message: "invalid tag name", span: nameToken.span)
+                // Invalid character in middle - error span includes the @
+                throw ParseError(
+                    message: "invalid tag name", span: Span(start: start, end: nameToken.span.end))
             }
         }
 

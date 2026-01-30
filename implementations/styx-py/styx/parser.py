@@ -79,9 +79,10 @@ class PathState:
 class Parser:
     """Parser for Styx documents."""
 
-    __slots__ = ("current", "lexer", "peeked")
+    __slots__ = ("current", "lexer", "peeked", "source")
 
     def __init__(self, source: str) -> None:
+        self.source = source
         self.lexer = Lexer(source)
         self.current = self.lexer.next_token()
         self.peeked: Token | None = None
@@ -250,7 +251,16 @@ class Parser:
             if isinstance(key.payload, Sequence):
                 raise ParseError("invalid key", key.span)
             if isinstance(key.payload, Scalar) and key.payload.kind == ScalarKind.HEREDOC:
-                raise ParseError("invalid key", key.span)
+                # Point at just the opening marker (<<TAG), not the whole content
+                error_span = self._heredoc_start_span(key.payload.span)
+                raise ParseError("invalid key", error_span)
+
+    def _heredoc_start_span(self, heredoc_span: Span) -> Span:
+        """Get the span of just the heredoc opening marker (<<TAG\\n)."""
+        text = self.source[heredoc_span.start : heredoc_span.end]
+        newline_idx = text.find("\n")
+        end_offset = newline_idx + 1 if newline_idx >= 0 else len(text)
+        return Span(heredoc_span.start, heredoc_span.start + end_offset)
 
     def _expand_dotted_path_with_state(
         self, path_text: str, span: Span, path_state: PathState
@@ -390,14 +400,14 @@ class Parser:
                 at_token = self._advance()
                 return Value(span=at_token.span, tag=tag)
             # If there's something else immediately after the tag (like /package),
-            # it's an invalid tag name. Span starts after @ (at the tag name).
+            # it's an invalid tag name. Span starts at the @.
             if not self._check(
                 TokenType.EOF,
                 TokenType.RBRACE,
                 TokenType.RPAREN,
                 TokenType.COMMA,
             ):
-                raise ParseError("invalid tag name", Span(start + 1, self.current.span.end))
+                raise ParseError("invalid tag name", Span(start, self.current.span.end))
 
         return Value(span=Span(start, tag_token.span.end), tag=tag)
 

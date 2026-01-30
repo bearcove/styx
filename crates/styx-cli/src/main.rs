@@ -565,7 +565,11 @@ fn run_tree(format: &str, file: &str) -> Result<(), CliError> {
             }
         },
         "debug" => {
-            let value = styx_tree::parse(&source)?;
+            let value = styx_tree::parse(&source).map_err(|e| CliError::ParseDiagnostic {
+                error: e,
+                source: source.clone(),
+                filename: filename.to_string(),
+            })?;
             print_tree(&value, 0);
         }
         _ => {

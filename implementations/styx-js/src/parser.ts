@@ -15,10 +15,12 @@ import {
 
 export class Parser {
   private lexer: Lexer;
+  private source: string;
   private current: Token;
   private peeked: Token | null = null;
 
   constructor(source: string) {
+    this.source = source;
     this.lexer = new Lexer(source);
     this.current = this.lexer.nextToken();
   }
@@ -277,9 +279,19 @@ export class Parser {
       }
       // Heredocs cannot be used as keys
       if (key.payload.type === "scalar" && key.payload.kind === "heredoc") {
-        throw new ParseError(`invalid key`, key.span);
+        // Point at just the opening marker (<<TAG), not the whole content
+        const errorSpan = this.heredocStartSpan(key.payload.span);
+        throw new ParseError(`invalid key`, errorSpan);
       }
     }
+  }
+
+  /** Get the span of just the heredoc opening marker (<<TAG\n). */
+  private heredocStartSpan(heredocSpan: Span): Span {
+    const text = this.source.slice(heredocSpan.start, heredocSpan.end);
+    const newlineIdx = text.indexOf("\n");
+    const endOffset = newlineIdx >= 0 ? newlineIdx + 1 : text.length;
+    return { start: heredocSpan.start, end: heredocSpan.start + endOffset };
   }
 
   private expandDottedPath(pathText: string, span: Span, seenKeys: Map<string, Span>): Entry {
@@ -375,7 +387,7 @@ export class Parser {
     if (!this.current.hadWhitespaceBefore) {
       // Check for invalid tag continuation (e.g., @org/package where / is not a valid tag char)
       if (this.check("scalar")) {
-        throw new ParseError("invalid tag name", { start: start + 1, end: this.current.span.end });
+        throw new ParseError("invalid tag name", { start, end: this.current.span.end });
       }
       if (this.check("lbrace")) {
         const obj = this.parseObject();
