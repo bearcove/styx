@@ -522,7 +522,7 @@ impl<'src> Parser2<'src> {
                             self.event_queue.push_back(first_event);
                         }
                         // Drain any additional queued events and re-queue them after ObjectStart
-                        let mut additional: Vec<_> = self.event_queue.drain(..).collect();
+                        let additional: Vec<_> = self.event_queue.drain(..).collect();
                         // Now return ObjectStart and queue the rest
                         for ev in additional {
                             self.event_queue.push_back(ev);
@@ -794,21 +794,8 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::At => {
-                let ev = self.parse_tag_value(t);
-                // parse_tag_value sets state appropriately:
-                // - AfterTagBoundaryConsumed if it consumed a boundary
-                // - ExpectSeqElem if the tag has a sequence payload
-                // - ExpectEntry if the tag has an object payload
-                // Only set AfterValue if parse_tag_value didn't set a specific state
-                if !matches!(
-                    self.state,
-                    State::AfterTagBoundaryConsumed { .. }
-                        | State::ExpectSeqElem
-                        | State::ExpectEntry
-                ) {
-                    self.state = State::AfterValue;
-                }
-                Some(ev)
+                // parse_tag_value always sets state appropriately
+                Some(self.parse_tag_value(t))
             }
 
             TokenKind::BareScalar => {
@@ -963,16 +950,16 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::At => {
-                let ev = self.parse_tag_value(t);
-                if !matches!(
-                    self.state,
-                    State::AfterTagBoundaryConsumed { .. }
-                        | State::ExpectSeqElem
-                        | State::ExpectEntry
-                ) {
-                    self.state = State::AfterValue;
-                }
-                Some(ev)
+                // parse_tag_value always sets state appropriately
+                // It returns TagStart and may queue payload events (ObjectStart, etc.)
+                // We need Key -> TagStart -> payload, but Key is already queued.
+                // So we need to insert TagStart before any payload events.
+                let queue_len_before = self.event_queue.len();
+                let tag_ev = self.parse_tag_value(t);
+                // Insert TagStart right after existing queued events (like Key)
+                // but before any new events from parse_tag_value
+                self.event_queue.insert(queue_len_before, tag_ev);
+                None
             }
 
             _ => {
@@ -1020,16 +1007,8 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::At => {
-                let ev = self.parse_tag_value(t);
-                if !matches!(
-                    self.state,
-                    State::AfterTagBoundaryConsumed { .. }
-                        | State::ExpectSeqElem
-                        | State::ExpectEntry
-                ) {
-                    self.state = State::AfterValue;
-                }
-                Some(ev)
+                // parse_tag_value always sets state appropriately
+                Some(self.parse_tag_value(t))
             }
 
             TokenKind::BareScalar => {
@@ -1662,6 +1641,7 @@ impl<'src> Parser2<'src> {
                     span: Span::new(name_end, name_end + 1),
                 });
                 self.event_queue.push_back(Event::TagEnd);
+                self.state = State::AfterValue;
                 return Event::TagStart {
                     span: Span::new(at_token.span.start, name_end + 1),
                     name: tag_name,
@@ -1704,6 +1684,7 @@ impl<'src> Parser2<'src> {
                             kind: ScalarKind::Quoted,
                         });
                         self.event_queue.push_back(Event::TagEnd);
+                        self.state = State::AfterValue;
                         return Event::TagStart {
                             span: Span::new(at_token.span.start, name_end),
                             name: tag_name,
@@ -1716,6 +1697,7 @@ impl<'src> Parser2<'src> {
                             kind: ScalarKind::Raw,
                         });
                         self.event_queue.push_back(Event::TagEnd);
+                        self.state = State::AfterValue;
                         return Event::TagStart {
                             span: Span::new(at_token.span.start, name_end),
                             name: tag_name,
@@ -2127,16 +2109,8 @@ impl<'src> Parser2<'src> {
             }
 
             TokenKind::At => {
-                let ev = self.parse_tag_value(t);
-                if !matches!(
-                    self.state,
-                    State::AfterTagBoundaryConsumed { .. }
-                        | State::ExpectSeqElem
-                        | State::ExpectEntry
-                ) {
-                    self.state = State::AfterValue;
-                }
-                Some(ev)
+                // parse_tag_value always sets state appropriately
+                Some(self.parse_tag_value(t))
             }
 
             TokenKind::BareScalar => {
@@ -2339,10 +2313,10 @@ impl<'src> Parser2<'src> {
                                 }
                                 hex.push(chars.next().unwrap());
                             }
-                            if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                                if let Some(ch) = char::from_u32(code) {
-                                    result.push(ch);
-                                }
+                            if let Ok(code) = u32::from_str_radix(&hex, 16)
+                                && let Some(ch) = char::from_u32(code)
+                            {
+                                result.push(ch);
                             }
                         } else {
                             let mut hex = String::with_capacity(4);
@@ -2355,12 +2329,11 @@ impl<'src> Parser2<'src> {
                                     }
                                 }
                             }
-                            if hex.len() == 4 {
-                                if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                                    if let Some(ch) = char::from_u32(code) {
-                                        result.push(ch);
-                                    }
-                                }
+                            if hex.len() == 4
+                                && let Ok(code) = u32::from_str_radix(&hex, 16)
+                                && let Some(ch) = char::from_u32(code)
+                            {
+                                result.push(ch);
                             } else {
                                 result.push_str("\\u");
                                 result.push_str(&hex);
@@ -3530,6 +3503,7 @@ foo bar
 
     #[test]
     fn test_nested_tag_in_object() {
+        // Complex nested structure with unit keys and tag values
         let input = r#"meta {id test}
 schema {
     @ @object{
@@ -3537,10 +3511,6 @@ schema {
     }
 }"#;
         let events = parse(input);
-        for (i, e) in events.iter().enumerate() {
-            eprintln!("{i}: {e:?}");
-        }
-        // Check no errors
         let errors: Vec<_> = events
             .iter()
             .filter(|e| matches!(e, Event::Error { .. }))
@@ -3550,13 +3520,9 @@ schema {
 
     #[test]
     fn test_tag_with_seq_containing_tag() {
-        // Simple case: tag with sequence payload containing another tag
+        // Tag with sequence payload containing another tag
         let input = "x @outer(@inner)";
         let events = parse(input);
-        for (i, e) in events.iter().enumerate() {
-            eprintln!("{i}: {e:?}");
-        }
-        // Check no errors
         let errors: Vec<_> = events
             .iter()
             .filter(|e| matches!(e, Event::Error { .. }))

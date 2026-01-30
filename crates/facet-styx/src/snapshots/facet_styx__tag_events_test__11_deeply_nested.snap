@@ -5,4 +5,9 @@ expression: "collect_events(\"y @Foo(@Bar{x 1})\")"
 FieldKey(Some("y"))
 VariantTag("Foo")
 SequenceStart
-Error: ParseError { span: Span { offset: 16, len: 1 }, kind: UnexpectedToken { got: "unexpected token", expected: "valid syntax" } }
+  VariantTag("Bar")
+  StructStart
+    FieldKey(Some("x"))
+    Scalar(1)
+  StructEnd
+SequenceEnd
