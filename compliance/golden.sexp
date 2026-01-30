@@ -495,6 +495,19 @@
     (scalar [0, 3] bare "obj")
     (object [4, 6] newline))
 )
+; file: compliance/corpus/02-objects/mixed-separators.styx
+(document [-1, -1]
+  (entry
+    (scalar [0, 3] bare "obj")
+    (object [4, 20] newline
+      (entry
+        (scalar [10, 11] bare "a")
+        (scalar [12, 13] bare "1"))
+      (entry
+        (scalar [15, 16] bare "b")
+        (scalar [17, 18] bare "2"))
+    ))
+)
 ; file: compliance/corpus/02-objects/nested.styx
 (document [-1, -1]
   (entry
@@ -1106,19 +1119,6 @@
 (error [43, 47] "parse error at 43-47: invalid tag name")
 ; file: compliance/corpus/07-invalid/invalid-tag-slash.styx
 (error [34, 46] "parse error at 34-46: invalid tag name")
-; file: compliance/corpus/07-invalid/mixed-separators.styx
-(document [-1, -1]
-  (entry
-    (scalar [0, 3] bare "obj")
-    (object [4, 20] newline
-      (entry
-        (scalar [10, 11] bare "a")
-        (scalar [12, 13] bare "1"))
-      (entry
-        (scalar [15, 16] bare "b")
-        (scalar [17, 18] bare "2"))
-    ))
-)
 ; file: compliance/corpus/07-invalid/nest-into-scalar.styx
 (error [66, 71] "parse error at 66-71: cannot nest into `a.b` which has a terminal value")
 ; file: compliance/corpus/07-invalid/reopen-nested-path.styx
