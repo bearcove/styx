@@ -184,6 +184,8 @@ pub enum ParseErrorKind {
     /// Missing whitespace between bare scalar and `{` or `(`.
     // parser[impl entry.whitespace]
     MissingWhitespaceBeforeBlock,
+    /// Trailing content after explicit root object.
+    TrailingContent,
 }
 
 impl std::fmt::Display for ParseErrorKind {
@@ -230,6 +232,9 @@ impl std::fmt::Display for ParseErrorKind {
                     f,
                     "missing whitespace before `{{` or `(` (required after bare scalar to distinguish from tag syntax like `@tag{{}}`)"
                 )
+            }
+            ParseErrorKind::TrailingContent => {
+                write!(f, "trailing content after explicit root object")
             }
         }
     }

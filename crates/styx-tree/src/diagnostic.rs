@@ -205,6 +205,15 @@ impl ParseError {
                         .with_color(Color::Red),
                 )
                 .with_help("bare keys must be separated from `{` or `(` by whitespace (to distinguish from tags like `@tag{}`)"),
+
+            ParseErrorKind::TrailingContent => Report::build(ReportKind::Error, (filename, range.clone()))
+                .with_message("trailing content after explicit root object")
+                .with_label(
+                    Label::new((filename, range))
+                        .with_message("unexpected content here")
+                        .with_color(Color::Red),
+                )
+                .with_help("an explicit root object `{...}` is the entire document; nothing can follow it"),
         }
     }
 }
@@ -233,6 +242,9 @@ impl std::fmt::Display for ParseError {
             ParseErrorKind::CommaInSequence => write!(f, "unexpected comma in sequence"),
             ParseErrorKind::MissingWhitespaceBeforeBlock => {
                 write!(f, "missing whitespace before block")
+            }
+            ParseErrorKind::TrailingContent => {
+                write!(f, "trailing content after explicit root object")
             }
         }?;
         write!(f, " at offset {}", self.span.start)

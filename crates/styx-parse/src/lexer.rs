@@ -46,7 +46,14 @@ pub enum Lexeme<'src> {
     SeqEnd { span: Span },
 
     /// An attribute key `key>` - value follows as next lexeme(s)
-    AttrKey { span: Span, key: &'src str },
+    AttrKey {
+        /// Span of the full `key>` including the `>`
+        span: Span,
+        /// Span of just the key (excluding `>`)
+        key_span: Span,
+        /// The key text
+        key: &'src str,
+    },
 
     /// Comma separator
     Comma { span: Span },
@@ -65,6 +72,29 @@ pub enum Lexeme<'src> {
 
     /// Tokenizer error
     Error { span: Span, message: &'static str },
+}
+
+impl Lexeme<'_> {
+    /// Get the span of this lexeme.
+    /// Returns a zero-length span at position 0 for Eof.
+    pub fn span(&self) -> Span {
+        match self {
+            Lexeme::Scalar { span, .. }
+            | Lexeme::Unit { span }
+            | Lexeme::Tag { span, .. }
+            | Lexeme::ObjectStart { span }
+            | Lexeme::ObjectEnd { span }
+            | Lexeme::SeqStart { span }
+            | Lexeme::SeqEnd { span }
+            | Lexeme::AttrKey { span, .. }
+            | Lexeme::Comma { span }
+            | Lexeme::Newline { span }
+            | Lexeme::Comment { span, .. }
+            | Lexeme::DocComment { span, .. }
+            | Lexeme::Error { span, .. } => *span,
+            Lexeme::Eof => Span::new(0, 0),
+        }
+    }
 }
 
 /// Lexer that produces lexemes from tokens.
@@ -153,21 +183,33 @@ impl<'src> Lexer<'src> {
                 // Check if payload follows immediately (no whitespace)
                 // Payload can be: { ( " r#" @ or Tag
                 let payload_tok = self.peek_token();
-                let has_payload = payload_tok.span.start == tok.span.end
-                    && matches!(
-                        payload_tok.kind,
-                        TokenKind::LBrace
-                            | TokenKind::LParen
-                            | TokenKind::QuotedScalar
-                            | TokenKind::RawScalar
-                            | TokenKind::At
-                            | TokenKind::Tag
-                    );
+                let is_adjacent = payload_tok.span.start == tok.span.end;
+                let is_valid_payload = matches!(
+                    payload_tok.kind,
+                    TokenKind::LBrace
+                        | TokenKind::LParen
+                        | TokenKind::QuotedScalar
+                        | TokenKind::RawScalar
+                        | TokenKind::At
+                        | TokenKind::Tag
+                );
+
+                // If a bare scalar is adjacent (no whitespace), it's an invalid tag name
+                // e.g., @org/package where /package is adjacent
+                // But structural tokens like ) } , or newlines are fine - they end the tag
+                if is_adjacent && !is_valid_payload && payload_tok.kind == TokenKind::BareScalar {
+                    // Consume the adjacent token to include it in the error span
+                    let bad_tok = self.next_token();
+                    return Lexeme::Error {
+                        span: Span::new(tok.span.start, bad_tok.span.end),
+                        message: "invalid tag name",
+                    };
+                }
 
                 Lexeme::Tag {
                     span: tok.span,
                     name,
-                    has_payload,
+                    has_payload: is_adjacent && is_valid_payload,
                 }
             }
 
@@ -182,17 +224,23 @@ impl<'src> Lexer<'src> {
 
                     // Check that value follows immediately (no whitespace after `>`)
                     let value_tok = self.peek_token();
-                    if value_tok.kind == TokenKind::Whitespace
-                        || value_tok.kind == TokenKind::Newline
-                    {
+                    let gt_span = Span::new(gt_end - 1, gt_end);
+                    if value_tok.kind == TokenKind::Newline || value_tok.kind == TokenKind::Eof {
                         return Lexeme::Error {
-                            span: Span::new(tok.span.start, gt_end),
+                            span: gt_span,
+                            message: "expected a value",
+                        };
+                    }
+                    if value_tok.kind == TokenKind::Whitespace {
+                        return Lexeme::Error {
+                            span: gt_span,
                             message: "whitespace after `>` in attribute (use key>value with no spaces)",
                         };
                     }
 
                     return Lexeme::AttrKey {
                         span: Span::new(tok.span.start, gt_end),
+                        key_span: tok.span,
                         key: tok.text,
                     };
                 }

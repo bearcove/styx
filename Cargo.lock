@@ -2040,6 +2040,7 @@ dependencies = [
  "styx-gen-go",
  "styx-lsp",
  "styx-parse",
+ "styx-tokenizer",
  "styx-tree",
  "tokio",
  "which",

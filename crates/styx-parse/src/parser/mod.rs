@@ -136,7 +136,8 @@ impl<'src> Parser<'src> {
                 Some(Event::DocumentStart)
             }
             ParserState::BeforeExpression => self.advance_expression(),
-            ParserState::AfterDocument | ParserState::AfterExpression => None,
+            ParserState::AfterExpression => None,
+            ParserState::AfterDocument => self.check_trailing_content(),
             ParserState::DocumentRoot { .. } => self.advance_document_root(),
             ParserState::InObject { .. } => self.advance_in_object(),
         }
@@ -159,6 +160,35 @@ impl<'src> Parser<'src> {
                     self.emit_atom_as_value(&atom);
                     self.state = ParserState::AfterExpression;
                     return self.event_queue.pop_front();
+                }
+            }
+        }
+    }
+
+    /// Check for trailing content after explicit root object.
+    /// Returns an error event if there's non-whitespace content, otherwise None.
+    fn check_trailing_content(&mut self) -> Option<Event<'src>> {
+        loop {
+            let lexeme = self.source.next();
+            match lexeme {
+                // Skip whitespace, newlines, and comments - these are allowed after document
+                Lexeme::Newline { .. } | Lexeme::Comment { .. } => continue,
+                Lexeme::Eof => return None,
+                // Any other content is an error
+                _ => {
+                    let span = lexeme.span();
+                    // Consume remaining tokens to find the full extent of trailing content
+                    let mut end = span.end;
+                    loop {
+                        match self.source.next() {
+                            Lexeme::Eof => break,
+                            lex => end = lex.span().end,
+                        }
+                    }
+                    return Some(Event::Error {
+                        span: Span::new(span.start, end),
+                        kind: ParseErrorKind::TrailingContent,
+                    });
                 }
             }
         }
@@ -208,19 +238,13 @@ impl<'src> Parser<'src> {
                     });
                 }
                 Lexeme::ObjectStart { span } => {
-                    // Explicit root object
-                    let old_state = std::mem::replace(
-                        &mut self.state,
-                        ParserState::InObject {
-                            start_span: span,
-                            seen_keys: HashMap::new(),
-                            pending_doc_comment: None,
-                            parent: Box::new(ParserState::AfterDocument),
-                        },
-                    );
-                    if let ParserState::InObject { parent, .. } = &mut self.state {
-                        **parent = old_state;
-                    }
+                    // Explicit root object - after it closes, document is done
+                    self.state = ParserState::InObject {
+                        start_span: span,
+                        seen_keys: HashMap::new(),
+                        pending_doc_comment: None,
+                        parent: Box::new(ParserState::AfterDocument),
+                    };
                     return Some(Event::ObjectStart {
                         span,
                         separator: Separator::Newline,
@@ -640,7 +664,7 @@ impl<'src> Parser<'src> {
             }
             Lexeme::ObjectStart { span } => self.parse_object_atom(span),
             Lexeme::SeqStart { span } => self.parse_sequence_atom(span),
-            Lexeme::AttrKey { span, key } => self.parse_attributes(span, key),
+            Lexeme::AttrKey { key_span, key, .. } => self.parse_attributes(key_span, key),
             Lexeme::Error { span, message } => {
                 // Check if this is an invalid escape error from a quoted string
                 if message.contains("escape") {
@@ -661,7 +685,7 @@ impl<'src> Parser<'src> {
                 } else {
                     Atom {
                         span,
-                        content: AtomContent::Error,
+                        content: AtomContent::Error { message },
                     }
                 }
             }
@@ -670,15 +694,21 @@ impl<'src> Parser<'src> {
             | Lexeme::Comma { span }
             | Lexeme::Newline { span } => Atom {
                 span,
-                content: AtomContent::Error,
+                content: AtomContent::Error {
+                    message: "unexpected token",
+                },
             },
             Lexeme::Comment { span, .. } | Lexeme::DocComment { span, .. } => Atom {
                 span,
-                content: AtomContent::Error,
+                content: AtomContent::Error {
+                    message: "unexpected token",
+                },
             },
             Lexeme::Eof => Atom {
                 span: Span::new(self.input.len() as u32, self.input.len() as u32),
-                content: AtomContent::Error,
+                content: AtomContent::Error {
+                    message: "unexpected end of input",
+                },
             },
         }
     }
@@ -837,11 +867,11 @@ impl<'src> Parser<'src> {
         loop {
             let lexeme = self.source.next();
             match lexeme {
-                Lexeme::AttrKey { span, key } => {
+                Lexeme::AttrKey { key_span, key, .. } => {
                     let value = self.parse_attribute_value();
                     attrs.push(AttributeEntry {
                         key,
-                        key_span: span,
+                        key_span,
                         value,
                     });
                 }
@@ -1076,6 +1106,17 @@ impl<'src> Parser<'src> {
                     kind: ScalarKind::Quoted,
                 });
             }
+            AtomContent::Error { message } => {
+                let kind = if message.contains("invalid tag name") {
+                    ParseErrorKind::InvalidTagName
+                } else {
+                    ParseErrorKind::InvalidKey
+                };
+                self.event_queue.push_back(Event::Error {
+                    span: atom.span,
+                    kind,
+                });
+            }
             _ => {
                 self.event_queue.push_back(Event::Error {
                     span: atom.span,
@@ -1246,10 +1287,17 @@ impl<'src> Parser<'src> {
                     kind: ScalarKind::Quoted,
                 });
             }
-            AtomContent::Error { .. } => {
+            AtomContent::Error { message } => {
+                let kind = if message.contains("invalid tag name") {
+                    ParseErrorKind::InvalidTagName
+                } else if message.contains("expected a value") {
+                    ParseErrorKind::ExpectedValue
+                } else {
+                    ParseErrorKind::UnexpectedToken
+                };
                 self.event_queue.push_back(Event::Error {
                     span: atom.span,
-                    kind: ParseErrorKind::UnexpectedToken,
+                    kind,
                 });
             }
         }
@@ -1310,7 +1358,10 @@ enum AtomContent<'src> {
     InvalidEscapeScalar {
         raw_inner: Cow<'src, str>,
     },
-    Error,
+    /// An error from the lexer.
+    Error {
+        message: &'src str,
+    },
 }
 
 #[derive(Debug, Clone)]

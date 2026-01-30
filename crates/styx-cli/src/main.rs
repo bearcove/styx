@@ -21,6 +21,8 @@ use facet_styx::{SchemaFile, validate};
 use figue as args;
 use styx_format::{FormatOptions, format_source};
 use styx_lsp::{TokenType, compute_highlight_spans};
+use styx_parse::{Lexer, Parser};
+use styx_tokenizer::Tokenizer;
 use styx_tree::{Payload, Value};
 
 // ============================================================================
@@ -88,6 +90,27 @@ struct Args {
 enum Command {
     /// Start language server (stdio)
     Lsp,
+
+    /// Show tokens from tokenizer
+    Tokens {
+        /// Input file
+        #[facet(args::positional)]
+        file: String,
+    },
+
+    /// Show lexemes from lexer
+    Lexemes {
+        /// Input file
+        #[facet(args::positional)]
+        file: String,
+    },
+
+    /// Show parser events
+    Events {
+        /// Input file
+        #[facet(args::positional)]
+        file: String,
+    },
 
     /// Show parse tree
     Tree {
@@ -389,6 +412,9 @@ fn run_subcommand_mode(args: &[String]) -> Result<(), CliError> {
 
     match parsed.command {
         Some(Command::Lsp) => run_lsp(),
+        Some(Command::Tokens { file }) => run_tokens(&file),
+        Some(Command::Lexemes { file }) => run_lexemes(&file),
+        Some(Command::Events { file }) => run_events(&file),
         Some(Command::Tree { format, file }) => run_tree(&format, &file),
         Some(Command::Cst { file }) => run_cst(&file),
         Some(Command::Extract { binary }) => run_extract(&binary),
@@ -491,6 +517,31 @@ fn run_lsp() -> Result<(), CliError> {
             .await
             .map_err(|e| CliError::Io(io::Error::other(e)))
     })
+}
+
+fn run_tokens(file: &str) -> Result<(), CliError> {
+    let source = read_input(Some(file))?;
+    for token in Tokenizer::new(&source) {
+        println!("{:?}", token);
+    }
+    Ok(())
+}
+
+fn run_lexemes(file: &str) -> Result<(), CliError> {
+    let source = read_input(Some(file))?;
+    for lexeme in Lexer::new(&source) {
+        println!("{:?}", lexeme);
+    }
+    Ok(())
+}
+
+fn run_events(file: &str) -> Result<(), CliError> {
+    let source = read_input(Some(file))?;
+    let mut parser = Parser::new(&source);
+    while let Some(event) = parser.next_event() {
+        println!("{:?}", event);
+    }
+    Ok(())
 }
 
 fn run_tree(format: &str, file: &str) -> Result<(), CliError> {

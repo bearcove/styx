@@ -28,6 +28,7 @@ fn error_kind_name(kind: &ParseErrorKind) -> &'static str {
         ParseErrorKind::NestIntoTerminal { .. } => "NestIntoTerminal",
         ParseErrorKind::CommaInSequence => "CommaInSequence",
         ParseErrorKind::MissingWhitespaceBeforeBlock => "MissingWhitespaceBeforeBlock",
+        ParseErrorKind::TrailingContent => "TrailingContent",
     }
 }
 
@@ -313,7 +314,7 @@ fn test_tag_with_dot_invalid() {
     assert_parse_errors(
         r#"
 @Some.Type
- ^^^^^^^^^ InvalidTagName
+^^^^^^^^^^ InvalidTagName
 "#,
     );
 }
