@@ -131,10 +131,7 @@ impl<'src> Tokenizer<'src> {
                 self.advance();
                 self.token(TokenKind::Gt, start)
             }
-            '@' => {
-                self.advance();
-                self.token(TokenKind::At, start)
-            }
+            '@' => self.tokenize_at_or_tag(),
 
             // Quoted scalar
             '"' => self.tokenize_quoted_scalar(),
@@ -212,6 +209,39 @@ impl<'src> Tokenizer<'src> {
             }
         }
         self.token(TokenKind::BareScalar, start)
+    }
+
+    /// Tokenize `@` (unit) or `@name` (tag).
+    fn tokenize_at_or_tag(&mut self) -> Token<'src> {
+        let start = self.pos;
+        self.advance(); // consume `@`
+
+        // Check if followed by tag name start: [A-Za-z_]
+        match self.peek() {
+            Some(c) if c.is_ascii_alphabetic() || c == '_' => {
+                // Tag name: consume [A-Za-z0-9_-]*
+                // But stop before `r#` or `r"` which starts a raw string payload
+                self.advance();
+                while let Some(c) = self.peek() {
+                    // Check for raw string start: if current char is part of tag
+                    // and next would be `r` followed by `#` or `"`, stop here
+                    if c == 'r' && matches!(self.peek_nth(1), Some('#' | '"')) {
+                        // Don't consume `r` - it's the start of a raw string
+                        break;
+                    }
+                    if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                self.token(TokenKind::Tag, start)
+            }
+            _ => {
+                // Standalone @ = unit
+                self.token(TokenKind::At, start)
+            }
+        }
     }
 
     /// Tokenize a quoted scalar: `"..."`.

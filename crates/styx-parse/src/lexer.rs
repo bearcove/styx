@@ -144,43 +144,33 @@ impl<'src> Lexer<'src> {
             },
 
             TokenKind::At => {
-                // Check if followed immediately by identifier (no whitespace)
-                let next = self.peek_token();
-                if next.kind == TokenKind::BareScalar && next.span.start == tok.span.end {
-                    // Tag: @name
-                    let name_tok = self.next_token();
-                    let name = name_tok.text;
-                    let span = Span::new(tok.span.start, name_tok.span.end);
+                // Standalone @ = unit
+                Lexeme::Unit { span: tok.span }
+            }
 
-                    // Validate tag name: must match [A-Za-z_][A-Za-z0-9_-]*
-                    if !is_valid_tag_name(name) {
-                        return Lexeme::Error {
-                            span,
-                            message: "invalid tag name",
-                        };
-                    }
+            TokenKind::Tag => {
+                // Tag token includes the @ and name, e.g. "@foo"
+                // Extract the name (skip the @)
+                let name = &tok.text[1..];
 
-                    // Check if payload follows immediately (no whitespace)
-                    // Payload can be: { } ( ) " @ or another quoted/raw scalar
-                    let payload_tok = self.peek_token();
-                    let has_payload = payload_tok.span.start == name_tok.span.end
-                        && matches!(
-                            payload_tok.kind,
-                            TokenKind::LBrace
-                                | TokenKind::LParen
-                                | TokenKind::QuotedScalar
-                                | TokenKind::RawScalar
-                                | TokenKind::At
-                        );
+                // Check if payload follows immediately (no whitespace)
+                // Payload can be: { ( " r#" @ or Tag
+                let payload_tok = self.peek_token();
+                let has_payload = payload_tok.span.start == tok.span.end
+                    && matches!(
+                        payload_tok.kind,
+                        TokenKind::LBrace
+                            | TokenKind::LParen
+                            | TokenKind::QuotedScalar
+                            | TokenKind::RawScalar
+                            | TokenKind::At
+                            | TokenKind::Tag
+                    );
 
-                    Lexeme::Tag {
-                        span,
-                        name,
-                        has_payload,
-                    }
-                } else {
-                    // Standalone @ = unit
-                    Lexeme::Unit { span: tok.span }
+                Lexeme::Tag {
+                    span: tok.span,
+                    name,
+                    has_payload,
                 }
             }
 
@@ -328,21 +318,6 @@ impl<'src> Iterator for Lexer<'src> {
             Some(lexeme)
         }
     }
-}
-
-/// Check if a tag name is valid: [A-Za-z_][A-Za-z0-9_-]*
-fn is_valid_tag_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
-        _ => return false,
-    }
-    for c in chars {
-        if !c.is_ascii_alphanumeric() && c != '_' && c != '-' {
-            return false;
-        }
-    }
-    true
 }
 
 /// Process escape sequences in a quoted string.
@@ -545,9 +520,44 @@ mod tests {
         assert!(matches!(&lexemes[1], Lexeme::SeqStart { .. }));
     }
 
-    // Note: @tagr#"content"# (tag with raw string payload) requires tokenizer changes
-    // The tokenizer currently produces `At` + `BareScalar("tagr#")` because it
-    // doesn't know about tag context. This will be addressed when we update the tokenizer.
+    #[test]
+    fn test_tag_with_unit_payload() {
+        // @tag@ - tag with explicit unit payload
+        let lexemes = lex("@tag@");
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "tag",
+                has_payload: true,
+                ..
+            }
+        ));
+        assert!(matches!(&lexemes[1], Lexeme::Unit { .. }));
+    }
+
+    #[test]
+    fn test_tag_with_raw_payload() {
+        // @tagr#"x"# - tag "tag" with raw string payload
+        let lexemes = lex(r##"@tagr#"x"#"##);
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "tag",
+                has_payload: true,
+                ..
+            }
+        ));
+        match &lexemes[1] {
+            Lexeme::Scalar {
+                value,
+                kind: ScalarKind::Raw,
+                ..
+            } => {
+                assert_eq!(value.as_ref(), "x");
+            }
+            other => panic!("expected raw scalar, got {:?}", other),
+        }
+    }
 
     #[test]
     fn test_tag_with_space_before_sequence() {
@@ -581,12 +591,14 @@ mod tests {
     // This will be addressed when we update the tokenizer.
 
     #[test]
-    fn test_invalid_tag_name() {
+    fn test_at_followed_by_digit() {
+        // @123 is not a tag - it's unit (@) followed by scalar (123)
         let lexemes = lex("@123");
+        assert!(matches!(&lexemes[0], Lexeme::Unit { .. }));
         assert!(matches!(
-            &lexemes[0],
-            Lexeme::Error {
-                message: "invalid tag name",
+            &lexemes[1],
+            Lexeme::Scalar {
+                kind: ScalarKind::Bare,
                 ..
             }
         ));
