@@ -307,7 +307,7 @@ impl TreeBuilder {
                             {
                                 last.key = key;
                                 last.doc_comment = doc_comment;
-                                return true;
+                                return;
                             }
                             // Otherwise add as unit-valued entry
                             entries.push(Entry {
@@ -324,7 +324,7 @@ impl TreeBuilder {
                             {
                                 last.key = key;
                                 last.doc_comment = doc_comment;
-                                return true;
+                                return;
                             }
                             self.root_entries.push(Entry {
                                 key,
@@ -405,7 +405,7 @@ impl TreeBuilder {
                         key: None,
                         doc_comment: None,
                     });
-                    return true;
+                    return;
                 }
 
                 self.push_value(scalar);
@@ -446,7 +446,7 @@ impl TreeBuilder {
                         key: None,
                         doc_comment: None,
                     });
-                    return true;
+                    return;
                 }
 
                 self.push_value(unit);
@@ -463,7 +463,7 @@ impl TreeBuilder {
                 // Only pop if the top frame is a Tag - otherwise the tag was already
                 // consumed when its payload was processed
                 if !matches!(self.stack.last(), Some(BuilderFrame::Tag { .. })) {
-                    return true;
+                    return;
                 }
                 if let Some(BuilderFrame::Tag { name, span }) = self.stack.pop() {
                     // Tag with no payload - just the tag itself
@@ -504,7 +504,7 @@ impl TreeBuilder {
                             key: None,
                             doc_comment: None,
                         });
-                        return true;
+                        return;
                     }
 
                     self.push_value(tagged);
@@ -711,7 +711,7 @@ mod tests {
 
         // Debug: print all events
         eprintln!("=== Events for no-space version ===");
-        let mut debug_parser = Parser2::new(source);
+        let mut debug_parser = Parser::new(source);
         while let Some(event) = debug_parser.next_event() {
             eprintln!("Event: {:?}", event);
         }

@@ -60,16 +60,6 @@ impl ParseError {
                     .with_help("each key must appear only once in an object")
             }
 
-            // diag[impl diagnostic.parser.mixed-separators]
-            ParseErrorKind::MixedSeparators => Report::build(ReportKind::Error, (filename, range.clone()))
-                .with_message("mixed separators in object")
-                .with_label(
-                    Label::new((filename, range))
-                        .with_message("mixing commas and newlines")
-                        .with_color(Color::Red),
-                )
-                .with_help("use either commas or newlines to separate entries, not both"),
-
             // diag[impl diagnostic.parser.unclosed]
             ParseErrorKind::UnclosedObject => Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_message("unclosed object")
@@ -223,7 +213,6 @@ impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.kind {
             ParseErrorKind::DuplicateKey { .. } => write!(f, "duplicate key"),
-            ParseErrorKind::MixedSeparators => write!(f, "mixed separators in object"),
             ParseErrorKind::UnclosedObject => write!(f, "unclosed object"),
             ParseErrorKind::UnclosedSequence => write!(f, "unclosed sequence"),
             ParseErrorKind::InvalidEscape(seq) => write!(f, "invalid escape sequence '{}'", seq),
