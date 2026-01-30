@@ -7,10 +7,9 @@
 
 use std::borrow::Cow;
 
-use crate::event::ScalarKind;
-use crate::span::Span;
-use crate::token::TokenKind;
-use crate::tokenizer::Tokenizer;
+use styx_tokenizer::{Span, Token, TokenKind, Tokenizer};
+
+use crate::events::ScalarKind;
 
 /// A lexeme produced by the Lexer from raw tokens.
 #[derive(Debug, Clone, PartialEq)]
@@ -73,7 +72,7 @@ pub enum Lexeme<'src> {
 pub struct Lexer<'src> {
     tokenizer: Tokenizer<'src>,
     /// Peeked token (if any)
-    peeked: Option<crate::Token<'src>>,
+    peeked: Option<Token<'src>>,
 }
 
 impl<'src> Lexer<'src> {
@@ -86,7 +85,7 @@ impl<'src> Lexer<'src> {
     }
 
     /// Peek at the next token without consuming it.
-    fn peek_token(&mut self) -> &crate::Token<'src> {
+    fn peek_token(&mut self) -> &Token<'src> {
         if self.peeked.is_none() {
             self.peeked = Some(self.tokenizer.next_token());
         }
@@ -94,7 +93,7 @@ impl<'src> Lexer<'src> {
     }
 
     /// Consume and return the next token.
-    fn next_token(&mut self) -> crate::Token<'src> {
+    fn next_token(&mut self) -> Token<'src> {
         self.peeked
             .take()
             .unwrap_or_else(|| self.tokenizer.next_token())

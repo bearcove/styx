@@ -1,6 +1,5 @@
 @schema {id crate:squiggles-config@1, cli squiggles}
 
-enabled true
+enabled false
 captain true
 scan_exclude (editors/zed-styx)
-

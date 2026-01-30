@@ -2100,7 +2100,6 @@ version = "1.0.1"
 dependencies = [
  "insta",
  "proptest",
- "rowan",
  "styx-cst",
  "styx-parse",
  "styx-tree",
@@ -2166,6 +2165,7 @@ dependencies = [
  "facet",
  "facet-testhelpers",
  "styx-testhelpers",
+ "styx-tokenizer",
  "tracing",
 ]
 

@@ -1,8 +1,5 @@
-use crate::event::Event;
-use crate::lexer::Lexer;
-
-#[allow(unused_imports)]
-use crate::trace;
+use crate::Event;
+use crate::Lexer;
 
 /// Parser frame for tracking nested structures.
 #[allow(dead_code)]
@@ -21,13 +18,13 @@ enum FrameKind {
 /// Frame-based pull parser for Styx.
 #[allow(dead_code)]
 #[derive(Clone)]
-pub struct Parser4<'src> {
+pub struct Parser<'src> {
     input: &'src str,
     lexer: Lexer<'src>,
     stack: Vec<Frame>,
 }
 
-impl<'src> Parser4<'src> {
+impl<'src> Parser<'src> {
     /// Create a new parser in document mode (implicit root object).
     pub fn new(source: &'src str) -> Self {
         Self {

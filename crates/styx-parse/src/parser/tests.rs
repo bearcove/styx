@@ -1,12 +1,13 @@
 //! DO NOT DELETE ANY TESTS OR WEAKEN THEM IN ANY WAY
 
 use super::*;
-use crate::event::{ParseErrorKind, ScalarKind};
+use crate::{ParseErrorKind, ScalarKind};
 use facet_testhelpers::test;
 use styx_testhelpers::{ActualError, assert_annotated_errors, source_without_annotations};
+use tracing::trace;
 
 fn parse(source: &str) -> Vec<Event<'_>> {
-    Parser4::new(source).parse_to_vec()
+    Parser::new(source).parse_to_vec()
 }
 
 fn parse_expr(_source: &str) -> Vec<Event<'_>> {

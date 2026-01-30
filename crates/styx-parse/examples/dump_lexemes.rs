@@ -1,5 +1,6 @@
 use std::io::Read;
-use styx_parse::{Lexer, Tokenizer};
+use styx_parse::Lexer;
+use styx_tokenizer::Tokenizer;
 
 fn main() {
     let mut source = String::new();

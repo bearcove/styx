@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use crate::Span;
+use styx_tokenizer::Span;
 
 /// Events emitted by the parser.
 #[derive(Debug, Clone, PartialEq, Eq)]
