@@ -37,6 +37,9 @@ enum State {
         key_kind: ScalarKind,
     },
 
+    /// Emit unit key (@ with no name), then read value.
+    EmitUnitKeyValue { at_span: Span },
+
     /// Emit Key event, then read value token.
     EmitKey {
         key_span: Span,
@@ -61,8 +64,35 @@ enum State {
     /// Emit Error, then EntryEnd.
     EmitErrorThenEntryEnd { error_span: Span },
 
+    /// Emit TooManyAtoms error, then EntryEnd.
+    EmitTooManyAtomsThenEntryEnd { error_span: Span },
+
+    /// Emit Unit value, then EntryEnd, then ObjectEnd.
+    EmitUnitThenEntryEndThenObjectEnd { unit_span: Span, rbrace_span: Span },
+
+    /// Emit EntryEnd after Unit, then ObjectEnd.
+    EmitEntryEndAfterUnitThenObjectEnd { rbrace_span: Span },
+
+    /// Emit scalar value, then TooManyAtoms error for extra atom.
+    EmitScalarThenTooManyAtoms { value_span: Span, error_span: Span },
+
+    /// After emitting quoted scalar, check for TooManyAtoms on same line.
+    AfterQuotedScalarValue { value_span: Span },
+
     /// Emit EntryEnd, then go back to ExpectEntry.
     EmitEntryEnd,
+
+    /// Emit EntryEnd, then ObjectEnd (value followed by `}`).
+    EmitEntryEndThenObjectEnd { rbrace_span: Span },
+
+    /// Emit ObjectEnd after EntryEnd.
+    EmitObjectEndAfterEntry { rbrace_span: Span },
+
+    /// Emit EntryEnd, then SequenceEnd (value followed by `)`).
+    EmitEntryEndThenSeqEnd { rparen_span: Span },
+
+    /// Emit SequenceEnd after EntryEnd.
+    EmitSeqEndAfterEntry { rparen_span: Span },
 
     /// Emit ObjectStart as a value (nested object).
     EmitObjectStartValue { span: Span },
@@ -275,12 +305,12 @@ impl<'src> Parser3<'src> {
         }
     }
 
-    /// Skip whitespace and newlines.
+    /// Skip whitespace and newlines (but not comments).
     fn next_token_skip_ws_nl(&mut self) -> crate::token::Token<'src> {
         loop {
             let t = self.lexer.next_token();
             match t.kind {
-                TokenKind::Whitespace | TokenKind::Newline | TokenKind::LineComment => continue,
+                TokenKind::Whitespace | TokenKind::Newline => continue,
                 _ => return t,
             }
         }
@@ -380,6 +410,15 @@ impl<'src> Parser3<'src> {
                     let t = self.next_token_skip_ws_nl();
 
                     match t.kind {
+                        TokenKind::LineComment => {
+                            // Emit comment, stay in ExpectEntry
+                            self.state = State::ExpectEntry;
+                            return Some(Event::Comment {
+                                span: t.span,
+                                text: t.text,
+                            });
+                        }
+
                         TokenKind::Eof => {
                             // End of input - close root object
                             self.context_stack.pop();
@@ -441,9 +480,34 @@ impl<'src> Parser3<'src> {
                             continue;
                         }
 
+                        TokenKind::LBrace => {
+                            // Explicit object at entry level
+                            // If we're at implicit root with no entries yet, this becomes an explicit root
+                            // Otherwise it's an error (can't have nested object without a key)
+                            match self.context_stack.last() {
+                                Some(Context::Object { implicit: true }) => {
+                                    // Replace implicit root with explicit root
+                                    self.context_stack.pop();
+                                    self.context_stack.push(Context::Object { implicit: false });
+                                    self.state = State::ExpectEntry;
+                                    return Some(Event::ObjectStart {
+                                        span: t.span,
+                                        separator: Separator::Comma,
+                                    });
+                                }
+                                _ => {
+                                    return Some(Event::Error {
+                                        span: t.span,
+                                        kind: ParseErrorKind::UnexpectedToken,
+                                    });
+                                }
+                            }
+                        }
+
                         TokenKind::At => {
-                            // TODO: @ (unit key or tag)
-                            todo!("@ in key position")
+                            // @ as a unit key - emit Key with no payload
+                            self.state = State::EmitUnitKeyValue { at_span: t.span };
+                            return Some(Event::EntryStart);
                         }
 
                         TokenKind::DocComment => {
@@ -465,6 +529,80 @@ impl<'src> Parser3<'src> {
                 State::EmitEntryStart { key_span, key_kind } => {
                     self.state = State::EmitKey { key_span, key_kind };
                     return Some(Event::EntryStart);
+                }
+
+                State::EmitUnitKeyValue { at_span } => {
+                    // Emit Key with no payload, then read value
+                    // First read next token to see the value
+                    let t = self.next_token_skip_ws();
+
+                    match t.kind {
+                        TokenKind::BareScalar => {
+                            self.state = State::AfterBareScalarValue { value_span: t.span };
+                            return Some(Event::Key {
+                                span: at_span,
+                                tag: None,
+                                payload: None,
+                                kind: ScalarKind::Bare,
+                            });
+                        }
+                        TokenKind::QuotedScalar => {
+                            self.state = State::EmitScalarValue {
+                                span: t.span,
+                                kind: ScalarKind::Quoted,
+                            };
+                            return Some(Event::Key {
+                                span: at_span,
+                                tag: None,
+                                payload: None,
+                                kind: ScalarKind::Bare,
+                            });
+                        }
+                        TokenKind::Newline | TokenKind::Eof => {
+                            self.state = State::EmitUnitValue { span: at_span };
+                            return Some(Event::Key {
+                                span: at_span,
+                                tag: None,
+                                payload: None,
+                                kind: ScalarKind::Bare,
+                            });
+                        }
+                        TokenKind::LBrace => {
+                            self.state = State::EmitObjectStartValue { span: t.span };
+                            return Some(Event::Key {
+                                span: at_span,
+                                tag: None,
+                                payload: None,
+                                kind: ScalarKind::Bare,
+                            });
+                        }
+                        TokenKind::LParen => {
+                            self.state = State::EmitSequenceStartValue { span: t.span };
+                            return Some(Event::Key {
+                                span: at_span,
+                                tag: None,
+                                payload: None,
+                                kind: ScalarKind::Bare,
+                            });
+                        }
+                        TokenKind::At => {
+                            // Tag value
+                            self.state = State::EmitTagStart { tag_span: t.span };
+                            return Some(Event::Key {
+                                span: at_span,
+                                tag: None,
+                                payload: None,
+                                kind: ScalarKind::Bare,
+                            });
+                        }
+                        _ => {
+                            self.state = State::EmitEntryEnd;
+                            return Some(Event::Error {
+                                span: t.span,
+                                kind: ParseErrorKind::UnexpectedToken,
+                            });
+                        }
+                    }
                 }
 
                 State::EmitKey { key_span, key_kind } => {
@@ -590,7 +728,8 @@ impl<'src> Parser3<'src> {
                         ScalarKind::Quoted => self.unescape_quoted(text),
                         _ => Cow::Borrowed(text),
                     };
-                    self.state = State::EmitEntryEnd;
+                    // Check for TooManyAtoms after the value
+                    self.state = State::AfterQuotedScalarValue { value_span: span };
                     return Some(Event::Scalar { span, value, kind });
                 }
 
@@ -622,12 +761,31 @@ impl<'src> Parser3<'src> {
                             });
                         }
 
-                        TokenKind::Newline
-                        | TokenKind::Eof
-                        | TokenKind::RBrace
-                        | TokenKind::RParen
-                        | TokenKind::Comma
-                        | TokenKind::Whitespace => {
+                        TokenKind::RBrace => {
+                            // Value followed by close brace - emit scalar, then close
+                            self.state = State::EmitEntryEndThenObjectEnd {
+                                rbrace_span: t.span,
+                            };
+                            return Some(Event::Scalar {
+                                span: value_span,
+                                value: Cow::Borrowed(self.text_at(value_span)),
+                                kind: ScalarKind::Bare,
+                            });
+                        }
+
+                        TokenKind::RParen => {
+                            // Value followed by close paren - emit scalar, then close seq
+                            self.state = State::EmitEntryEndThenSeqEnd {
+                                rparen_span: t.span,
+                            };
+                            return Some(Event::Scalar {
+                                span: value_span,
+                                value: Cow::Borrowed(self.text_at(value_span)),
+                                kind: ScalarKind::Bare,
+                            });
+                        }
+
+                        TokenKind::Newline | TokenKind::Eof | TokenKind::Comma => {
                             // Normal value - emit scalar now
                             self.state = State::EmitEntryEnd;
                             return Some(Event::Scalar {
@@ -635,6 +793,44 @@ impl<'src> Parser3<'src> {
                                 value: Cow::Borrowed(self.text_at(value_span)),
                                 kind: ScalarKind::Bare,
                             });
+                        }
+
+                        TokenKind::Whitespace => {
+                            // After value and whitespace, check what follows
+                            // If it's another scalar on the same line, that's TooManyAtoms
+                            let next = self.next_token_skip_ws();
+                            match next.kind {
+                                TokenKind::Newline
+                                | TokenKind::Eof
+                                | TokenKind::Comma
+                                | TokenKind::RBrace
+                                | TokenKind::RParen
+                                | TokenKind::LineComment => {
+                                    // OK - entry ends here
+                                    self.state = State::EmitEntryEnd;
+                                    return Some(Event::Scalar {
+                                        span: value_span,
+                                        value: Cow::Borrowed(self.text_at(value_span)),
+                                        kind: ScalarKind::Bare,
+                                    });
+                                }
+                                TokenKind::BareScalar | TokenKind::QuotedScalar => {
+                                    // Too many atoms! Emit scalar value, then error for the extra atom.
+                                    self.state = State::EmitScalarThenTooManyAtoms {
+                                        value_span,
+                                        error_span: next.span,
+                                    };
+                                    continue;
+                                }
+                                _ => {
+                                    self.state = State::EmitEntryEnd;
+                                    return Some(Event::Scalar {
+                                        span: value_span,
+                                        value: Cow::Borrowed(self.text_at(value_span)),
+                                        kind: ScalarKind::Bare,
+                                    });
+                                }
+                            }
                         }
 
                         _ => {
@@ -669,6 +865,95 @@ impl<'src> Parser3<'src> {
                     });
                 }
 
+                State::EmitTooManyAtomsThenEntryEnd { error_span } => {
+                    self.state = State::EmitEntryEnd;
+                    return Some(Event::Error {
+                        span: error_span,
+                        kind: ParseErrorKind::TooManyAtoms,
+                    });
+                }
+
+                State::EmitScalarThenTooManyAtoms {
+                    value_span,
+                    error_span,
+                } => {
+                    self.state = State::EmitTooManyAtomsThenEntryEnd { error_span };
+                    return Some(Event::Scalar {
+                        span: value_span,
+                        value: Cow::Borrowed(self.text_at(value_span)),
+                        kind: ScalarKind::Bare,
+                    });
+                }
+
+                State::AfterQuotedScalarValue { value_span: _ } => {
+                    // Check for TooManyAtoms - another scalar on same line
+                    let t = self.lexer.next_token();
+
+                    match t.kind {
+                        TokenKind::Newline | TokenKind::Eof | TokenKind::Comma => {
+                            // OK - entry ends
+                            self.state = State::EmitEntryEnd;
+                            continue;
+                        }
+                        TokenKind::RBrace => {
+                            // Close object
+                            self.context_stack.pop();
+                            self.state = State::EmitEntryEnd;
+                            return Some(Event::ObjectEnd { span: t.span });
+                        }
+                        TokenKind::RParen => {
+                            // Close sequence
+                            self.context_stack.pop();
+                            self.state = State::EmitEntryEnd;
+                            return Some(Event::SequenceEnd { span: t.span });
+                        }
+                        TokenKind::Whitespace => {
+                            // Check what follows whitespace
+                            let next = self.next_token_skip_ws();
+                            match next.kind {
+                                TokenKind::Newline
+                                | TokenKind::Eof
+                                | TokenKind::Comma
+                                | TokenKind::LineComment => {
+                                    self.state = State::EmitEntryEnd;
+                                    continue;
+                                }
+                                TokenKind::RBrace => {
+                                    self.context_stack.pop();
+                                    self.state = State::EmitEntryEnd;
+                                    return Some(Event::ObjectEnd { span: next.span });
+                                }
+                                TokenKind::RParen => {
+                                    self.context_stack.pop();
+                                    self.state = State::EmitEntryEnd;
+                                    return Some(Event::SequenceEnd { span: next.span });
+                                }
+                                TokenKind::BareScalar | TokenKind::QuotedScalar => {
+                                    // TooManyAtoms!
+                                    self.state = State::EmitTooManyAtomsThenEntryEnd {
+                                        error_span: next.span,
+                                    };
+                                    continue;
+                                }
+                                _ => {
+                                    self.state = State::EmitEntryEnd;
+                                    return Some(Event::Error {
+                                        span: next.span,
+                                        kind: ParseErrorKind::UnexpectedToken,
+                                    });
+                                }
+                            }
+                        }
+                        _ => {
+                            self.state = State::EmitEntryEnd;
+                            return Some(Event::Error {
+                                span: t.span,
+                                kind: ParseErrorKind::UnexpectedToken,
+                            });
+                        }
+                    }
+                }
+
                 State::EmitEntryEnd => {
                     // After EntryEnd, check what context we're in
                     match self.context_stack.last() {
@@ -686,6 +971,28 @@ impl<'src> Parser3<'src> {
                         }
                     }
                     return Some(Event::EntryEnd);
+                }
+
+                State::EmitEntryEndThenObjectEnd { rbrace_span } => {
+                    self.state = State::EmitObjectEndAfterEntry { rbrace_span };
+                    return Some(Event::EntryEnd);
+                }
+
+                State::EmitObjectEndAfterEntry { rbrace_span } => {
+                    self.context_stack.pop();
+                    self.state = State::EmitEntryEnd;
+                    return Some(Event::ObjectEnd { span: rbrace_span });
+                }
+
+                State::EmitEntryEndThenSeqEnd { rparen_span } => {
+                    self.state = State::EmitSeqEndAfterEntry { rparen_span };
+                    return Some(Event::EntryEnd);
+                }
+
+                State::EmitSeqEndAfterEntry { rparen_span } => {
+                    self.context_stack.pop();
+                    self.state = State::EmitEntryEnd;
+                    return Some(Event::SequenceEnd { span: rparen_span });
                 }
 
                 State::EmitObjectStartValue { span } => {
@@ -1044,6 +1351,15 @@ impl<'src> Parser3<'src> {
                     let text = self.text_at(full_span);
                     let remaining = &text[offset as usize..];
 
+                    // Validate: leading dot is an error
+                    if remaining.starts_with('.') {
+                        self.state = State::CloseDottedPath { depth };
+                        return Some(Event::Error {
+                            span: full_span,
+                            kind: ParseErrorKind::InvalidKey,
+                        });
+                    }
+
                     // Find the next segment
                     let (segment, next_offset) = if let Some(dot_pos) = remaining.find('.') {
                         (&remaining[..dot_pos], offset + dot_pos as u32 + 1)
@@ -1051,9 +1367,20 @@ impl<'src> Parser3<'src> {
                         (remaining, full_span.end - full_span.start) // last segment
                     };
 
-                    // Validate: empty segment is an error
+                    // Validate: empty segment is an error (shouldn't happen with above check)
                     if segment.is_empty() {
-                        self.state = State::EmitEntryEnd;
+                        self.state = State::CloseDottedPath { depth };
+                        return Some(Event::Error {
+                            span: full_span,
+                            kind: ParseErrorKind::InvalidKey,
+                        });
+                    }
+
+                    // Validate: trailing dot (segment ends at a dot with nothing after)
+                    let after_segment = &remaining[segment.len()..];
+                    if after_segment == "." {
+                        // Trailing dot with no segment after
+                        self.state = State::CloseDottedPath { depth };
                         return Some(Event::Error {
                             span: full_span,
                             kind: ParseErrorKind::InvalidKey,
@@ -1249,6 +1576,14 @@ impl<'src> Parser3<'src> {
                     let t = self.next_token_skip_ws_nl();
 
                     match t.kind {
+                        TokenKind::LineComment => {
+                            self.state = State::ExpectSeqElemInAttr;
+                            return Some(Event::Comment {
+                                span: t.span,
+                                text: t.text,
+                            });
+                        }
+
                         TokenKind::RParen => {
                             // End of sequence - go back to attr checking
                             self.context_stack.pop();
@@ -1517,6 +1852,14 @@ impl<'src> Parser3<'src> {
                     let t = self.next_token_skip_ws_nl();
 
                     match t.kind {
+                        TokenKind::LineComment => {
+                            self.state = State::ExpectSeqElem;
+                            return Some(Event::Comment {
+                                span: t.span,
+                                text: t.text,
+                            });
+                        }
+
                         TokenKind::RParen => {
                             // End of sequence
                             self.context_stack.pop();
