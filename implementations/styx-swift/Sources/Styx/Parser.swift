@@ -306,7 +306,7 @@ public struct Parser {
             // This object is the VALUE of segment[i-1]
             let objStart = segmentSpans[i - 1].1.start
             let objSpan = Span(start: objStart, end: lastKeyEnd)
-            let obj = Object(entries: [entry], separator: .newline, span: objSpan)
+            let obj = Object(entries: [entry], span: objSpan)
             result = Value(span: objSpan, payload: .object(obj))
         }
 
@@ -486,7 +486,6 @@ public struct Parser {
         let endSpan = entries.last?.value.span ?? startSpan
         let obj = Object(
             entries: entries,
-            separator: .comma,
             span: Span(start: startSpan.start, end: endSpan.end)
         )
         return Value(span: obj.span, payload: .object(obj))
@@ -521,50 +520,15 @@ public struct Parser {
         let start = openToken.span.start
 
         var entries: [Entry] = []
-        var separator: ObjectSeparator? = nil
-
-        // Track if first entry comes after newline (for mixed separator detection)
-        let firstEntryAfterNewline = current.hadNewlineBefore && !check(.rBrace, .eof)
 
         while !check(.rBrace, .eof) {
-            // Check for newline at start of iteration (indicating newline-separated format)
-            if current.hadNewlineBefore && !entries.isEmpty {
-                if separator == nil {
-                    separator = .newline
-                } else if separator == .comma {
-                    throw ParseError(
-                        message: "mixed separators (use either commas or newlines)",
-                        span: current.span)
-                }
-            }
-
             let key = try parseValue()
             let value = try parseValue()
             entries.append(Entry(key: key, value: value))
 
-            // Check for comma separator
+            // Skip commas (mixed separators now allowed)
             if check(.comma) {
-                // If first entry came after newline, mixing with comma is an error
-                if firstEntryAfterNewline && entries.count == 1 {
-                    throw ParseError(
-                        message: "mixed separators (use either commas or newlines)",
-                        span: current.span)
-                }
-                if separator == nil {
-                    separator = .comma
-                } else if separator != .comma {
-                    throw ParseError(
-                        message: "mixed separators (use either commas or newlines)",
-                        span: current.span)
-                }
-                _ = advance()  // consume comma
-            }
-        }
-
-        // Check for newline before closing brace (indicates newline format)
-        if current.hadNewlineBefore && !entries.isEmpty {
-            if separator == nil {
-                separator = .newline
+                _ = advance()
             }
         }
 
@@ -575,7 +539,6 @@ public struct Parser {
         let closeToken = advance()  // consume }
         return Object(
             entries: entries,
-            separator: separator ?? .comma,
             span: Span(start: start, end: closeToken.span.end)
         )
     }
