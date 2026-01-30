@@ -4,7 +4,7 @@
 //! all whitespace, comments, and exact source representation.
 
 use rowan::GreenNode;
-use styx_parse::{Lexer, Token, TokenKind};
+use styx_parse::{Token, TokenKind, Tokenizer};
 
 use crate::syntax_kind::{SyntaxKind, SyntaxNode};
 
@@ -81,7 +81,7 @@ struct CstParser<'src> {
 
 /// Iterator adapter for the lexer that includes EOF.
 struct TokenIter<'src> {
-    lexer: Lexer<'src>,
+    lexer: Tokenizer<'src>,
     done: bool,
 }
 
@@ -102,7 +102,7 @@ impl<'src> Iterator for TokenIter<'src> {
 
 impl<'src> CstParser<'src> {
     fn new(source: &'src str) -> Self {
-        let lexer = Lexer::new(source);
+        let lexer = Tokenizer::new(source);
         Self {
             source,
             lexer: TokenIter { lexer, done: false }.peekable(),

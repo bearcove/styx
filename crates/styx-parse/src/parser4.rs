@@ -42,6 +42,14 @@ impl<'src> Parser4<'src> {
     pub fn next_event(&mut self) -> Option<Event<'src>> {
         todo!("good luck")
     }
+
+    pub fn parse_to_vec(mut self) -> Vec<Event<'src>> {
+        let mut events = Vec::new();
+        while let Some(event) = self.next_event() {
+            events.push(event);
+        }
+        events
+    }
 }
 
 #[cfg(test)]

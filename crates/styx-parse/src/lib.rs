@@ -21,20 +21,20 @@ pub(crate) use trace;
 
 pub mod callback;
 pub mod event;
-mod lexer;
 pub mod parser;
 pub mod parser3;
 pub mod parser4;
 mod span;
 mod token;
+mod tokenizer;
 
 pub use callback::ParseCallback;
 pub use event::{Event, ParseErrorKind, ScalarKind, Separator};
-pub use lexer::Lexer;
 pub use parser3::Parser3;
 pub use parser4::Parser4;
 pub use span::Span;
 pub use token::{Token, TokenKind};
+pub use tokenizer::Tokenizer;
 
 /// Pull-based streaming parser for Styx documents.
 ///

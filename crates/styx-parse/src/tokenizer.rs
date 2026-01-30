@@ -1,13 +1,13 @@
-//! Lexer for the Styx configuration language.
+//! Tokenizer for the Styx configuration language.
 
 #[allow(unused_imports)]
 use crate::trace;
 use crate::{Span, Token, TokenKind};
 
-/// A lexer that produces tokens from Styx source text.
+/// A tokenizer that produces tokens from Styx source text.
 #[derive(Clone)]
-pub struct Lexer<'src> {
-    /// The source text being lexed.
+pub struct Tokenizer<'src> {
+    /// The source text being tokenized.
     source: &'src str,
     /// The remaining source text (suffix of `source`).
     remaining: &'src str,
@@ -25,8 +25,8 @@ struct HeredocState {
     delimiter: String,
 }
 
-impl<'src> Lexer<'src> {
-    /// Create a new lexer for the given source text.
+impl<'src> Tokenizer<'src> {
+    /// Create a new tokenizer for the given source text.
     pub fn new(source: &'src str) -> Self {
         Self {
             source,
@@ -94,7 +94,7 @@ impl<'src> Lexer<'src> {
     pub fn next_token(&mut self) -> Token<'src> {
         // Handle heredoc content if we're inside one
         if let Some(ref state) = self.heredoc_state.clone() {
-            return self.lex_heredoc_content(&state.delimiter);
+            return self.tokenize_heredoc_content(&state.delimiter);
         }
 
         // Check for EOF
@@ -137,20 +137,20 @@ impl<'src> Lexer<'src> {
             }
 
             // Quoted scalar
-            '"' => self.lex_quoted_scalar(),
+            '"' => self.tokenize_quoted_scalar(),
 
             // Comment or doc comment
-            '/' if self.starts_with("///") => self.lex_doc_comment(),
-            '/' if self.starts_with("//") => self.lex_line_comment(),
+            '/' if self.starts_with("///") => self.tokenize_doc_comment(),
+            '/' if self.starts_with("//") => self.tokenize_line_comment(),
             // Single / is a bare scalar (e.g., /usr/bin/foo)
-            '/' => self.lex_bare_scalar(),
+            '/' => self.tokenize_bare_scalar(),
 
             // Heredoc - only if << is followed by uppercase letter
             // parser[impl scalar.heredoc.invalid]
             '<' if self.starts_with("<<")
                 && matches!(self.peek_nth(2), Some(c) if c.is_ascii_uppercase()) =>
             {
-                self.lex_heredoc_start()
+                self.tokenize_heredoc_start()
             }
             // << not followed by uppercase is an error
             '<' if self.starts_with("<<") => {
@@ -161,10 +161,10 @@ impl<'src> Lexer<'src> {
             }
 
             // Raw string
-            'r' if matches!(self.peek_nth(1), Some('#' | '"')) => self.lex_raw_string(),
+            'r' if matches!(self.peek_nth(1), Some('#' | '"')) => self.tokenize_raw_string(),
 
             // Whitespace
-            ' ' | '\t' => self.lex_whitespace(),
+            ' ' | '\t' => self.tokenize_whitespace(),
 
             // Newline
             '\n' => {
@@ -178,7 +178,7 @@ impl<'src> Lexer<'src> {
             }
 
             // Bare scalar (default for anything else that's not a special char)
-            _ if is_bare_scalar_start(c) => self.lex_bare_scalar(),
+            _ if is_bare_scalar_start(c) => self.tokenize_bare_scalar(),
 
             // Error: unrecognized character
             _ => {
@@ -188,8 +188,8 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    /// Lex horizontal whitespace (spaces and tabs).
-    fn lex_whitespace(&mut self) -> Token<'src> {
+    /// Tokenize horizontal whitespace (spaces and tabs).
+    fn tokenize_whitespace(&mut self) -> Token<'src> {
         let start = self.pos;
         while let Some(c) = self.peek() {
             if c == ' ' || c == '\t' {
@@ -201,8 +201,8 @@ impl<'src> Lexer<'src> {
         self.token(TokenKind::Whitespace, start)
     }
 
-    /// Lex a bare (unquoted) scalar.
-    fn lex_bare_scalar(&mut self) -> Token<'src> {
+    /// Tokenize a bare (unquoted) scalar.
+    fn tokenize_bare_scalar(&mut self) -> Token<'src> {
         let start = self.pos;
         while let Some(c) = self.peek() {
             if is_bare_scalar_char(c) {
@@ -214,8 +214,8 @@ impl<'src> Lexer<'src> {
         self.token(TokenKind::BareScalar, start)
     }
 
-    /// Lex a quoted scalar: `"..."`.
-    fn lex_quoted_scalar(&mut self) -> Token<'src> {
+    /// Tokenize a quoted scalar: `"..."`.
+    fn tokenize_quoted_scalar(&mut self) -> Token<'src> {
         let start = self.pos;
 
         // Consume opening quote
@@ -248,8 +248,8 @@ impl<'src> Lexer<'src> {
     }
 
     // parser[impl comment.line]
-    /// Lex a line comment: `// ...`.
-    fn lex_line_comment(&mut self) -> Token<'src> {
+    /// Tokenize a line comment: `// ...`.
+    fn tokenize_line_comment(&mut self) -> Token<'src> {
         let start = self.pos;
 
         // Consume `//`
@@ -267,8 +267,8 @@ impl<'src> Lexer<'src> {
         self.token(TokenKind::LineComment, start)
     }
 
-    /// Lex a doc comment: `/// ...`.
-    fn lex_doc_comment(&mut self) -> Token<'src> {
+    /// Tokenize a doc comment: `/// ...`.
+    fn tokenize_doc_comment(&mut self) -> Token<'src> {
         let start = self.pos;
 
         // Consume `///`
@@ -287,12 +287,12 @@ impl<'src> Lexer<'src> {
         self.token(TokenKind::DocComment, start)
     }
 
-    /// Lex a heredoc start: `<<DELIM`.
+    /// Tokenize a heredoc start: `<<DELIM`.
     ///
     /// Per parser[scalar.heredoc.syntax]: delimiter MUST match `[A-Z][A-Z0-9_]*`
     /// and not exceed 16 characters.
     // parser[impl scalar.heredoc.syntax]
-    fn lex_heredoc_start(&mut self) -> Token<'src> {
+    fn tokenize_heredoc_start(&mut self) -> Token<'src> {
         let start = self.pos;
 
         // Consume `<<`
@@ -401,10 +401,10 @@ impl<'src> Lexer<'src> {
         None
     }
 
-    /// Lex heredoc content until we find the closing delimiter.
+    /// Tokenize heredoc content until we find the closing delimiter.
     /// Per parser[scalar.heredoc.syntax]: The closing delimiter line MAY be indented;
     /// that indentation is stripped from content lines.
-    fn lex_heredoc_content(&mut self, delimiter: &str) -> Token<'src> {
+    fn tokenize_heredoc_content(&mut self, delimiter: &str) -> Token<'src> {
         let start = self.pos;
 
         // Check if we're at the delimiter (possibly indented) - end of heredoc
@@ -454,7 +454,7 @@ impl<'src> Lexer<'src> {
 
         // CRITICAL: If we hit EOF without finding the closing delimiter,
         // we must clear the heredoc state to avoid an infinite loop.
-        // The next call would otherwise re-enter lex_heredoc_content forever.
+        // The next call would otherwise re-enter tokenize_heredoc_content forever.
         if self.is_eof() && !found_end {
             self.heredoc_state = None;
             return self.token(TokenKind::Error, start);
@@ -464,9 +464,9 @@ impl<'src> Lexer<'src> {
     }
 
     // parser[impl scalar.raw.syntax]
-    /// Lex a raw string: `r#*"..."#*`.
+    /// Tokenize a raw string: `r#*"..."#*`.
     /// Returns the entire raw string including delimiters.
-    fn lex_raw_string(&mut self) -> Token<'src> {
+    fn tokenize_raw_string(&mut self) -> Token<'src> {
         let start = self.pos;
 
         // Consume `r`
@@ -528,7 +528,7 @@ impl<'src> Lexer<'src> {
     }
 }
 
-impl<'src> Iterator for Lexer<'src> {
+impl<'src> Iterator for Tokenizer<'src> {
     type Item = Token<'src>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -562,28 +562,28 @@ fn is_bare_scalar_char(c: char) -> bool {
 mod tests {
     use super::*;
 
-    fn lex(source: &str) -> Vec<(TokenKind, &str)> {
-        Lexer::new(source).map(|t| (t.kind, t.text)).collect()
+    fn tokenize(source: &str) -> Vec<(TokenKind, &str)> {
+        Tokenizer::new(source).map(|t| (t.kind, t.text)).collect()
     }
 
     #[test]
     fn test_structural_tokens() {
-        assert_eq!(lex("{"), vec![(TokenKind::LBrace, "{")]);
-        assert_eq!(lex("}"), vec![(TokenKind::RBrace, "}")]);
-        assert_eq!(lex("("), vec![(TokenKind::LParen, "(")]);
-        assert_eq!(lex(")"), vec![(TokenKind::RParen, ")")]);
-        assert_eq!(lex(","), vec![(TokenKind::Comma, ",")]);
-        assert_eq!(lex(">"), vec![(TokenKind::Gt, ">")]);
-        assert_eq!(lex("@"), vec![(TokenKind::At, "@")]);
+        assert_eq!(tokenize("{"), vec![(TokenKind::LBrace, "{")]);
+        assert_eq!(tokenize("}"), vec![(TokenKind::RBrace, "}")]);
+        assert_eq!(tokenize("("), vec![(TokenKind::LParen, "(")]);
+        assert_eq!(tokenize(")"), vec![(TokenKind::RParen, ")")]);
+        assert_eq!(tokenize(","), vec![(TokenKind::Comma, ",")]);
+        assert_eq!(tokenize(">"), vec![(TokenKind::Gt, ">")]);
+        assert_eq!(tokenize("@"), vec![(TokenKind::At, "@")]);
     }
 
     #[test]
     fn test_bare_scalar() {
-        assert_eq!(lex("hello"), vec![(TokenKind::BareScalar, "hello")]);
-        assert_eq!(lex("42"), vec![(TokenKind::BareScalar, "42")]);
-        assert_eq!(lex("true"), vec![(TokenKind::BareScalar, "true")]);
+        assert_eq!(tokenize("hello"), vec![(TokenKind::BareScalar, "hello")]);
+        assert_eq!(tokenize("42"), vec![(TokenKind::BareScalar, "42")]);
+        assert_eq!(tokenize("true"), vec![(TokenKind::BareScalar, "true")]);
         assert_eq!(
-            lex("https://example.com/path"),
+            tokenize("https://example.com/path"),
             vec![(TokenKind::BareScalar, "https://example.com/path")]
         );
     }
@@ -591,11 +591,11 @@ mod tests {
     #[test]
     fn test_quoted_scalar() {
         assert_eq!(
-            lex(r#""hello world""#),
+            tokenize(r#""hello world""#),
             vec![(TokenKind::QuotedScalar, r#""hello world""#)]
         );
         assert_eq!(
-            lex(r#""with \"escapes\"""#),
+            tokenize(r#""with \"escapes\"""#),
             vec![(TokenKind::QuotedScalar, r#""with \"escapes\"""#)]
         );
     }
@@ -604,11 +604,11 @@ mod tests {
     fn test_raw_scalar() {
         // Raw scalars now include the full text with delimiters (for lossless CST)
         assert_eq!(
-            lex(r#"r"hello""#),
+            tokenize(r#"r"hello""#),
             vec![(TokenKind::RawScalar, r#"r"hello""#)]
         );
         assert_eq!(
-            lex(r##"r#"hello"#"##),
+            tokenize(r##"r#"hello"#"##),
             vec![(TokenKind::RawScalar, r##"r#"hello"#"##)]
         );
     }
@@ -616,22 +616,25 @@ mod tests {
     #[test]
     fn test_comments() {
         assert_eq!(
-            lex("// comment"),
+            tokenize("// comment"),
             vec![(TokenKind::LineComment, "// comment")]
         );
-        assert_eq!(lex("/// doc"), vec![(TokenKind::DocComment, "/// doc")]);
+        assert_eq!(
+            tokenize("/// doc"),
+            vec![(TokenKind::DocComment, "/// doc")]
+        );
     }
 
     #[test]
     fn test_whitespace() {
-        assert_eq!(lex("  \t"), vec![(TokenKind::Whitespace, "  \t")]);
-        assert_eq!(lex("\n"), vec![(TokenKind::Newline, "\n")]);
-        assert_eq!(lex("\r\n"), vec![(TokenKind::Newline, "\r\n")]);
+        assert_eq!(tokenize("  \t"), vec![(TokenKind::Whitespace, "  \t")]);
+        assert_eq!(tokenize("\n"), vec![(TokenKind::Newline, "\n")]);
+        assert_eq!(tokenize("\r\n"), vec![(TokenKind::Newline, "\r\n")]);
     }
 
     #[test]
     fn test_mixed() {
-        let tokens = lex("{host localhost}");
+        let tokens = tokenize("{host localhost}");
         assert_eq!(
             tokens,
             vec![
@@ -646,7 +649,7 @@ mod tests {
 
     #[test]
     fn test_heredoc() {
-        let tokens = lex("<<EOF\nhello\nworld\nEOF");
+        let tokens = tokenize("<<EOF\nhello\nworld\nEOF");
         assert_eq!(
             tokens,
             vec![
@@ -661,24 +664,32 @@ mod tests {
     #[test]
     fn test_heredoc_valid_delimiters() {
         // Single uppercase letter
-        assert!(lex("<<A\nx\nA").iter().all(|t| t.0 != TokenKind::Error));
+        assert!(
+            tokenize("<<A\nx\nA")
+                .iter()
+                .all(|t| t.0 != TokenKind::Error)
+        );
         // Multiple uppercase letters
-        assert!(lex("<<EOF\nx\nEOF").iter().all(|t| t.0 != TokenKind::Error));
+        assert!(
+            tokenize("<<EOF\nx\nEOF")
+                .iter()
+                .all(|t| t.0 != TokenKind::Error)
+        );
         // With digits after first char
         assert!(
-            lex("<<MY123\nx\nMY123")
+            tokenize("<<MY123\nx\nMY123")
                 .iter()
                 .all(|t| t.0 != TokenKind::Error)
         );
         // With underscores
         assert!(
-            lex("<<MY_DELIM\nx\nMY_DELIM")
+            tokenize("<<MY_DELIM\nx\nMY_DELIM")
                 .iter()
                 .all(|t| t.0 != TokenKind::Error)
         );
         // 16 chars (max allowed)
         assert!(
-            lex("<<ABCDEFGHIJKLMNOP\nx\nABCDEFGHIJKLMNOP")
+            tokenize("<<ABCDEFGHIJKLMNOP\nx\nABCDEFGHIJKLMNOP")
                 .iter()
                 .all(|t| t.0 != TokenKind::Error)
         );
@@ -688,11 +699,11 @@ mod tests {
     #[test]
     fn test_heredoc_must_start_uppercase() {
         // Starts with digit - error
-        assert!(lex("<<123FOO").iter().any(|t| t.0 == TokenKind::Error));
+        assert!(tokenize("<<123FOO").iter().any(|t| t.0 == TokenKind::Error));
         // Starts with underscore - error
-        assert!(lex("<<_FOO").iter().any(|t| t.0 == TokenKind::Error));
-        // Lowercase - error (lexer won't even recognize it as heredoc delimiter chars)
-        let tokens = lex("<<foo");
+        assert!(tokenize("<<_FOO").iter().any(|t| t.0 == TokenKind::Error));
+        // Lowercase - error (tokenizer won't even recognize it as heredoc delimiter chars)
+        let tokens = tokenize("<<foo");
         // This will be << followed by bare scalar "foo"
         assert!(!tokens.iter().any(|t| t.0 == TokenKind::HeredocStart));
     }
@@ -702,7 +713,7 @@ mod tests {
     fn test_heredoc_max_16_chars() {
         // 17 chars - error
         assert!(
-            lex("<<ABCDEFGHIJKLMNOPQ\nx\nABCDEFGHIJKLMNOPQ")
+            tokenize("<<ABCDEFGHIJKLMNOPQ\nx\nABCDEFGHIJKLMNOPQ")
                 .iter()
                 .any(|t| t.0 == TokenKind::Error)
         );
@@ -711,23 +722,23 @@ mod tests {
     #[test]
     fn test_slash_in_bare_scalar() {
         // Single slash followed by text should be a bare scalar
-        let tokens = lex("/foo");
+        let tokens = tokenize("/foo");
         assert_eq!(tokens, vec![(TokenKind::BareScalar, "/foo")]);
 
         // Path-like value
-        let tokens = lex("/usr/bin/foo");
+        let tokens = tokenize("/usr/bin/foo");
         assert_eq!(tokens, vec![(TokenKind::BareScalar, "/usr/bin/foo")]);
 
         // But // is still a comment
-        let tokens = lex("// comment");
+        let tokens = tokenize("// comment");
         assert_eq!(tokens, vec![(TokenKind::LineComment, "// comment")]);
     }
 
     #[test]
     fn test_attribute_syntax_tokens() {
-        // Check how the lexer tokenizes attribute syntax
-        let tokens = lex("server host>localhost");
-        // Lexer produces separate tokens - attribute syntax is handled by the parser
+        // Check how the tokenizer tokenizes attribute syntax
+        let tokens = tokenize("server host>localhost");
+        // Tokenizer produces separate tokens - attribute syntax is handled by the parser
         assert_eq!(
             tokens,
             vec![
@@ -743,7 +754,7 @@ mod tests {
     #[test]
     fn test_unterminated_heredoc() {
         // Heredoc without closing delimiter should be an error
-        let tokens = lex("<<EOF\nhello world\n");
+        let tokens = tokenize("<<EOF\nhello world\n");
         eprintln!("tokens = {:?}", tokens);
         assert!(
             tokens.iter().any(|t| t.0 == TokenKind::Error),
@@ -754,7 +765,7 @@ mod tests {
     #[test]
     fn test_unterminated_string() {
         // String without closing quote should be an error
-        let tokens = lex("\"hello");
+        let tokens = tokenize("\"hello");
         eprintln!("tokens = {:?}", tokens);
         assert!(
             tokens.iter().any(|t| t.0 == TokenKind::Error),
