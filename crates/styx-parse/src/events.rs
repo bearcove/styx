@@ -148,8 +148,6 @@ pub enum ParseErrorKind {
     UnclosedObject,
     /// Unclosed sequence (missing `)`).
     UnclosedSequence,
-    /// Mixed separators in object (some commas, some newlines).
-    MixedSeparators,
     /// Invalid escape sequence in quoted string.
     InvalidEscape(String),
     /// Expected a key.
@@ -194,9 +192,6 @@ impl std::fmt::Display for ParseErrorKind {
             ParseErrorKind::UnexpectedToken => write!(f, "unexpected token"),
             ParseErrorKind::UnclosedObject => write!(f, "unclosed object (missing `}}`)"),
             ParseErrorKind::UnclosedSequence => write!(f, "unclosed sequence (missing `)`)"),
-            ParseErrorKind::MixedSeparators => {
-                write!(f, "mixed separators (use either commas or newlines)")
-            }
             ParseErrorKind::InvalidEscape(seq) => write!(f, "invalid escape sequence: {}", seq),
             ParseErrorKind::ExpectedKey => write!(f, "expected a key"),
             ParseErrorKind::ExpectedValue => write!(f, "expected a value"),

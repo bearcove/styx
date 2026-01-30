@@ -19,7 +19,6 @@ fn error_kind_name(kind: &ParseErrorKind) -> &'static str {
         ParseErrorKind::UnexpectedToken => "UnexpectedToken",
         ParseErrorKind::UnclosedObject => "UnclosedObject",
         ParseErrorKind::UnclosedSequence => "UnclosedSequence",
-        ParseErrorKind::MixedSeparators => "MixedSeparators",
         ParseErrorKind::InvalidEscape(_) => "InvalidEscape",
         ParseErrorKind::ExpectedKey => "ExpectedKey",
         ParseErrorKind::ExpectedValue => "ExpectedValue",
@@ -653,23 +652,18 @@ a 2
 }
 
 #[test]
-fn test_mixed_separators_comma_then_newline() {
+fn test_mixed_separators_allowed() {
+    // Mixed separators (commas and newlines) are allowed
     assert_parse_errors(
         r#"
 {a 1, b 2
-         ^ MixedSeparators
 c 3}
 "#,
     );
-}
-
-#[test]
-fn test_mixed_separators_newline_then_comma() {
     assert_parse_errors(
         r#"
 {a 1
 b 2, c 3}
-   ^ MixedSeparators
 "#,
     );
 }
@@ -1085,17 +1079,6 @@ fn test_invalid_escape_annotated() {
         r#"
 x "\0"
    ^^ InvalidEscape
-"#,
-    );
-}
-
-#[test]
-fn test_mixed_separators_annotated() {
-    assert_parse_errors(
-        r#"
-{a 1, b 2
-         ^ MixedSeparators
-c 3}
 "#,
     );
 }
