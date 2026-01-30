@@ -1,8 +1,7 @@
 //! Tokenizer for the Styx configuration language.
 
-#[allow(unused_imports)]
-use crate::trace;
 use crate::{Span, Token, TokenKind};
+use tracing::trace;
 
 /// A tokenizer that produces tokens from Styx source text.
 #[derive(Clone)]

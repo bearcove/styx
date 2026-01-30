@@ -34,6 +34,7 @@ proptest = "1"
 serde_json = "1"
 
 # Internal crates
+styx-tokenizer = { path = "crates/styx-tokenizer", version = "1.0" }
 styx-parse = { path = "crates/styx-parse", version = "1.0" }
 styx-format = { path = "crates/styx-format", version = "1.0" }
 styx-tree = { path = "crates/styx-tree", version = "1.0" }

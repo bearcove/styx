@@ -2177,6 +2177,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "styx-tokenizer"
+version = "1.0.0"
+dependencies = [
+ "facet",
+ "facet-testhelpers",
+ "styx-testhelpers",
+ "tracing",
+]
+
+[[package]]
 name = "styx-tree"
 version = "1.0.1"
 dependencies = [
