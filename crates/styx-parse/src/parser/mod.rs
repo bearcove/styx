@@ -8,42 +8,73 @@ use styx_tokenizer::Span;
 use crate::events::{ParseErrorKind, ScalarKind, Separator};
 use crate::{Event, Lexeme, Lexer};
 
+/// Wraps lexer with a single pending slot for stashing boundary lexemes.
+#[derive(Clone)]
+struct LexemeSource<'src> {
+    lexer: Lexer<'src>,
+    /// Single pending lexeme slot. When collect_entry_atoms hits a boundary
+    /// (comma, closing brace, etc.), it stashes the lexeme here instead of
+    /// discarding it. Limited to exactly one slot - if we ever need more,
+    /// that's a bug in our logic.
+    pending: Option<Lexeme<'src>>,
+}
+
+impl<'src> LexemeSource<'src> {
+    fn new(source: &'src str) -> Self {
+        Self {
+            lexer: Lexer::new(source),
+            pending: None,
+        }
+    }
+
+    fn next(&mut self) -> Lexeme<'src> {
+        self.pending
+            .take()
+            .unwrap_or_else(|| self.lexer.next_lexeme())
+    }
+
+    fn stash(&mut self, lexeme: Lexeme<'src>) {
+        assert!(self.pending.is_none(), "double stash - this is a bug");
+        self.pending = Some(lexeme);
+    }
+}
+
 /// Pull-based event parser for Styx.
 #[derive(Clone)]
 pub struct Parser<'src> {
     input: &'src str,
-    lexer: Lexer<'src>,
-    stack: Vec<Frame<'src>>,
+    source: LexemeSource<'src>,
+    state: ParserState,
     event_queue: VecDeque<Event<'src>>,
 }
 
-/// Shared state for parsing object entries.
-#[derive(Clone, Default)]
-struct ObjectState {
-    seen_keys: HashMap<KeyValue, Span>,
-    pending_doc_comment: Option<Span>,
-}
-
-/// Parser frame for tracking nested structures.
+/// Parser state machine states.
 #[derive(Clone)]
-enum Frame<'src> {
+enum ParserState {
     /// Haven't emitted DocumentStart yet.
     BeforeDocument,
 
     /// At implicit document root.
     DocumentRoot {
-        state: ObjectState,
+        seen_keys: HashMap<KeyValue, Span>,
+        pending_doc_comment: Option<Span>,
         path_state: PathState,
     },
 
     /// Inside explicit object { ... }.
-    Object {
+    InObject {
         start_span: Span,
-        state: ObjectState,
+        seen_keys: HashMap<KeyValue, Span>,
+        pending_doc_comment: Option<Span>,
+        /// Parent state to restore when we pop.
+        parent: Box<ParserState>,
     },
 
     /// Inside sequence ( ... ).
-    Sequence { start_span: Span },
+    InSequence {
+        start_span: Span,
+        parent: Box<ParserState>,
+    },
 
     /// Document ended.
     AfterDocument,
@@ -54,8 +85,8 @@ impl<'src> Parser<'src> {
     pub fn new(source: &'src str) -> Self {
         Self {
             input: source,
-            lexer: Lexer::new(source),
-            stack: vec![Frame::BeforeDocument],
+            source: LexemeSource::new(source),
+            state: ParserState::BeforeDocument,
             event_queue: VecDeque::new(),
         }
     }
@@ -80,234 +111,418 @@ impl<'src> Parser<'src> {
         events
     }
 
-    /// Advance the state machine, possibly queuing events.
+    /// Advance the state machine.
     fn advance(&mut self) -> Option<Event<'src>> {
         loop {
-            let frame = self.stack.last_mut()?;
-
-            match frame {
-                Frame::BeforeDocument => {
-                    // Transition to document root
-                    *frame = Frame::DocumentRoot {
-                        state: ObjectState::default(),
+            match &self.state {
+                ParserState::BeforeDocument => {
+                    self.state = ParserState::DocumentRoot {
+                        seen_keys: HashMap::new(),
+                        pending_doc_comment: None,
                         path_state: PathState::default(),
                     };
                     return Some(Event::DocumentStart);
                 }
+                ParserState::AfterDocument => return None,
+                ParserState::DocumentRoot { .. } => return self.advance_document_root(),
+                ParserState::InObject { .. } => return self.advance_in_object(),
+                ParserState::InSequence { .. } => return self.advance_in_sequence(),
+            }
+        }
+    }
 
-                Frame::DocumentRoot { state, path_state } => {
-                    // Skip whitespace and newlines, handle comments
-                    loop {
-                        let lexeme = self.lexer.next_lexeme();
-                        match lexeme {
-                            Lexeme::Eof => {
-                                // Check for dangling doc comment
-                                if let Some(span) = state.pending_doc_comment.take() {
-                                    self.event_queue.push_back(Event::Error {
-                                        span,
-                                        kind: ParseErrorKind::DanglingDocComment,
-                                    });
-                                }
-                                self.event_queue.push_back(Event::DocumentEnd);
-                                *self.stack.last_mut().unwrap() = Frame::AfterDocument;
-                                return self.event_queue.pop_front();
-                            }
-                            Lexeme::Newline { .. } | Lexeme::Comma { .. } => {
-                                // Skip separators at root level
-                                continue;
-                            }
-                            Lexeme::Comment { span, text } => {
-                                return Some(Event::Comment { span, text });
-                            }
-                            Lexeme::DocComment { span, text } => {
-                                state.pending_doc_comment = Some(span);
-                                return Some(Event::DocComment { span, text });
-                            }
-                            Lexeme::ObjectStart { span } => {
-                                // Explicit root object - check for dangling doc comment first
-                                if let Some(doc_span) = state.pending_doc_comment.take() {
-                                    // Doc comment before explicit root is fine, it attaches to the object
-                                    self.event_queue.push_back(Event::ObjectStart {
-                                        span,
-                                        separator: Separator::Newline,
-                                    });
-                                    self.stack.push(Frame::Object {
-                                        start_span: span,
-                                        state: ObjectState::default(),
-                                    });
-                                    // Return the doc comment, object start is queued
-                                    return Some(Event::DocComment {
-                                        span: doc_span,
-                                        text: &self.input
-                                            [doc_span.start as usize..doc_span.end as usize],
-                                    });
-                                }
-                                // Push object frame
-                                self.stack.push(Frame::Object {
-                                    start_span: span,
-                                    state: ObjectState::default(),
-                                });
-                                return Some(Event::ObjectStart {
-                                    span,
-                                    separator: Separator::Newline,
-                                });
-                            }
-                            _ => {
-                                // Start of an entry - collect atoms
-                                state.pending_doc_comment = None;
-                                let atoms = self.collect_entry_atoms(lexeme);
-                                if !atoms.is_empty() {
-                                    self.emit_entry(&atoms, state, Some(path_state));
-                                }
-                                return self.event_queue.pop_front();
-                            }
+    /// Advance when in DocumentRoot state.
+    fn advance_document_root(&mut self) -> Option<Event<'src>> {
+        loop {
+            let lexeme = self.source.next();
+            match lexeme {
+                Lexeme::Eof => {
+                    if let ParserState::DocumentRoot {
+                        pending_doc_comment,
+                        ..
+                    } = &mut self.state
+                    {
+                        if let Some(span) = pending_doc_comment.take() {
+                            self.event_queue.push_back(Event::Error {
+                                span,
+                                kind: ParseErrorKind::DanglingDocComment,
+                            });
                         }
                     }
+                    self.event_queue.push_back(Event::DocumentEnd);
+                    self.state = ParserState::AfterDocument;
+                    return self.event_queue.pop_front();
                 }
-
-                Frame::Object { start_span, state } => {
-                    let start_span = *start_span;
-                    loop {
-                        let lexeme = self.lexer.next_lexeme();
-                        match lexeme {
-                            Lexeme::Eof => {
-                                // Unclosed object
-                                if let Some(span) = state.pending_doc_comment.take() {
-                                    self.event_queue.push_back(Event::Error {
-                                        span,
-                                        kind: ParseErrorKind::DanglingDocComment,
-                                    });
-                                }
-                                self.event_queue.push_back(Event::Error {
-                                    span: start_span,
-                                    kind: ParseErrorKind::UnclosedObject,
-                                });
-                                self.event_queue
-                                    .push_back(Event::ObjectEnd { span: start_span });
-                                self.stack.pop();
-                                return self.event_queue.pop_front();
-                            }
-                            Lexeme::ObjectEnd { span } => {
-                                // Check for dangling doc comment
-                                if let Some(doc_span) = state.pending_doc_comment.take() {
-                                    self.event_queue.push_back(Event::Error {
-                                        span: doc_span,
-                                        kind: ParseErrorKind::DanglingDocComment,
-                                    });
-                                }
-                                self.stack.pop();
-                                return Some(Event::ObjectEnd { span });
-                            }
-                            Lexeme::Newline { .. } | Lexeme::Comma { .. } => {
-                                continue;
-                            }
-                            Lexeme::Comment { span, text } => {
-                                return Some(Event::Comment { span, text });
-                            }
-                            Lexeme::DocComment { span, text } => {
-                                state.pending_doc_comment = Some(span);
-                                return Some(Event::DocComment { span, text });
-                            }
-                            _ => {
-                                state.pending_doc_comment = None;
-                                let atoms = self.collect_entry_atoms(lexeme);
-                                if !atoms.is_empty() {
-                                    self.emit_entry(&atoms, state, None);
-                                }
-                                return self.event_queue.pop_front();
-                            }
-                        }
+                Lexeme::Newline { .. } | Lexeme::Comma { .. } => continue,
+                Lexeme::Comment { span, text } => {
+                    return Some(Event::Comment { span, text });
+                }
+                Lexeme::DocComment { span, text } => {
+                    if let ParserState::DocumentRoot {
+                        pending_doc_comment,
+                        ..
+                    } = &mut self.state
+                    {
+                        *pending_doc_comment = Some(span);
                     }
+                    return Some(Event::DocComment { span, text });
                 }
-
-                Frame::Sequence { start_span } => {
-                    let start_span = *start_span;
-                    loop {
-                        let lexeme = self.lexer.next_lexeme();
-                        match lexeme {
-                            Lexeme::Eof => {
-                                // Unclosed sequence
-                                self.event_queue.push_back(Event::Error {
-                                    span: start_span,
-                                    kind: ParseErrorKind::UnclosedSequence,
-                                });
-                                self.event_queue
-                                    .push_back(Event::SequenceEnd { span: start_span });
-                                self.stack.pop();
-                                return self.event_queue.pop_front();
-                            }
-                            Lexeme::SeqEnd { span } => {
-                                self.stack.pop();
-                                return Some(Event::SequenceEnd { span });
-                            }
-                            Lexeme::Newline { .. } => {
-                                continue;
-                            }
-                            Lexeme::Comma { span } => {
-                                // Commas not allowed in sequences
-                                return Some(Event::Error {
-                                    span,
-                                    kind: ParseErrorKind::CommaInSequence,
-                                });
-                            }
-                            Lexeme::Comment { span, text } => {
-                                return Some(Event::Comment { span, text });
-                            }
-                            Lexeme::DocComment { span, text } => {
-                                // Doc comments in sequences are just emitted
-                                return Some(Event::DocComment { span, text });
-                            }
-                            _ => {
-                                // Parse single element
-                                let atom = self.parse_atom(lexeme);
-                                self.emit_atom_as_value(&atom);
-                                return self.event_queue.pop_front();
-                            }
-                        }
+                Lexeme::ObjectStart { span } => {
+                    // Explicit root object
+                    let old_state = std::mem::replace(
+                        &mut self.state,
+                        ParserState::InObject {
+                            start_span: span,
+                            seen_keys: HashMap::new(),
+                            pending_doc_comment: None,
+                            parent: Box::new(ParserState::AfterDocument),
+                        },
+                    );
+                    if let ParserState::InObject { parent, .. } = &mut self.state {
+                        *parent = Box::new(old_state);
                     }
+                    return Some(Event::ObjectStart {
+                        span,
+                        separator: Separator::Newline,
+                    });
                 }
-
-                Frame::AfterDocument => {
-                    return None;
+                _ => {
+                    if let ParserState::DocumentRoot {
+                        pending_doc_comment,
+                        ..
+                    } = &mut self.state
+                    {
+                        *pending_doc_comment = None;
+                    }
+                    let atoms = self.collect_entry_atoms(lexeme);
+                    if !atoms.is_empty() {
+                        self.emit_entry_at_root(&atoms);
+                    }
+                    return self.event_queue.pop_front();
                 }
             }
         }
     }
 
-    /// Collect atoms for an entry until a boundary (newline, comma, closing delimiter, EOF).
+    /// Advance when in InObject state.
+    fn advance_in_object(&mut self) -> Option<Event<'src>> {
+        let start = if let ParserState::InObject { start_span, .. } = &self.state {
+            *start_span
+        } else {
+            return None;
+        };
+
+        loop {
+            let lexeme = self.source.next();
+            match lexeme {
+                Lexeme::Eof => {
+                    if let ParserState::InObject {
+                        pending_doc_comment,
+                        ..
+                    } = &mut self.state
+                    {
+                        if let Some(span) = pending_doc_comment.take() {
+                            self.event_queue.push_back(Event::Error {
+                                span,
+                                kind: ParseErrorKind::DanglingDocComment,
+                            });
+                        }
+                    }
+                    self.event_queue.push_back(Event::Error {
+                        span: start,
+                        kind: ParseErrorKind::UnclosedObject,
+                    });
+                    self.event_queue.push_back(Event::ObjectEnd { span: start });
+                    self.pop_state();
+                    return self.event_queue.pop_front();
+                }
+                Lexeme::ObjectEnd { span } => {
+                    if let ParserState::InObject {
+                        pending_doc_comment,
+                        ..
+                    } = &mut self.state
+                    {
+                        if let Some(doc_span) = pending_doc_comment.take() {
+                            self.event_queue.push_back(Event::Error {
+                                span: doc_span,
+                                kind: ParseErrorKind::DanglingDocComment,
+                            });
+                        }
+                    }
+                    self.pop_state();
+                    return Some(Event::ObjectEnd { span });
+                }
+                Lexeme::Newline { .. } | Lexeme::Comma { .. } => continue,
+                Lexeme::Comment { span, text } => {
+                    return Some(Event::Comment { span, text });
+                }
+                Lexeme::DocComment { span, text } => {
+                    if let ParserState::InObject {
+                        pending_doc_comment,
+                        ..
+                    } = &mut self.state
+                    {
+                        *pending_doc_comment = Some(span);
+                    }
+                    return Some(Event::DocComment { span, text });
+                }
+                _ => {
+                    if let ParserState::InObject {
+                        pending_doc_comment,
+                        ..
+                    } = &mut self.state
+                    {
+                        *pending_doc_comment = None;
+                    }
+                    let atoms = self.collect_entry_atoms(lexeme);
+                    if !atoms.is_empty() {
+                        self.emit_entry_in_object(&atoms);
+                    }
+                    return self.event_queue.pop_front();
+                }
+            }
+        }
+    }
+
+    /// Advance when in InSequence state.
+    fn advance_in_sequence(&mut self) -> Option<Event<'src>> {
+        let start = if let ParserState::InSequence { start_span, .. } = &self.state {
+            *start_span
+        } else {
+            return None;
+        };
+
+        loop {
+            let lexeme = self.source.next();
+            match lexeme {
+                Lexeme::Eof => {
+                    self.event_queue.push_back(Event::Error {
+                        span: start,
+                        kind: ParseErrorKind::UnclosedSequence,
+                    });
+                    self.event_queue
+                        .push_back(Event::SequenceEnd { span: start });
+                    self.pop_state();
+                    return self.event_queue.pop_front();
+                }
+                Lexeme::SeqEnd { span } => {
+                    self.pop_state();
+                    return Some(Event::SequenceEnd { span });
+                }
+                Lexeme::Newline { .. } => continue,
+                Lexeme::Comma { span } => {
+                    return Some(Event::Error {
+                        span,
+                        kind: ParseErrorKind::CommaInSequence,
+                    });
+                }
+                Lexeme::Comment { span, text } => {
+                    return Some(Event::Comment { span, text });
+                }
+                Lexeme::DocComment { span, text } => {
+                    return Some(Event::DocComment { span, text });
+                }
+                _ => {
+                    let atom = self.parse_atom(lexeme);
+                    self.emit_atom_as_value(&atom);
+                    return self.event_queue.pop_front();
+                }
+            }
+        }
+    }
+
+    /// Pop the current state and restore parent.
+    fn pop_state(&mut self) {
+        let parent = match &mut self.state {
+            ParserState::InObject { parent, .. } | ParserState::InSequence { parent, .. } => {
+                std::mem::replace(parent.as_mut(), ParserState::AfterDocument)
+            }
+            _ => ParserState::AfterDocument,
+        };
+        self.state = parent;
+    }
+
+    /// Emit entry at document root (with path state).
+    fn emit_entry_at_root(&mut self, atoms: &[Atom<'src>]) {
+        if atoms.is_empty() {
+            return;
+        }
+
+        let key_atom = &atoms[0];
+
+        // Check for invalid key types
+        if let AtomContent::Scalar {
+            kind: ScalarKind::Heredoc,
+            ..
+        } = &key_atom.content
+        {
+            // For heredocs, point at just the opening marker (<<TAG), not the whole content
+            let error_span = self.heredoc_start_span(key_atom.span);
+            self.event_queue.push_back(Event::Error {
+                span: error_span,
+                kind: ParseErrorKind::InvalidKey,
+            });
+        }
+
+        // Check for dotted path
+        if let AtomContent::Scalar {
+            value,
+            kind: ScalarKind::Bare,
+        } = &key_atom.content
+        {
+            if value.contains('.') {
+                self.emit_dotted_path_entry(value.clone(), key_atom.span, atoms, true);
+                return;
+            }
+        }
+
+        // Simple key - use path state for duplicate detection at root level
+        // (path_state handles both simple and dotted paths uniformly)
+        let key_value = KeyValue::from_atom(key_atom);
+
+        if let ParserState::DocumentRoot { path_state, .. } = &mut self.state {
+            // Check path state - this handles duplicates for us
+            let key_text = key_value.to_key_string();
+            let path = vec![key_text];
+            let value_kind = if atoms.len() >= 2 {
+                match &atoms[1].content {
+                    AtomContent::Object { .. } | AtomContent::Attributes(_) => {
+                        PathValueKind::Object
+                    }
+                    _ => PathValueKind::Terminal,
+                }
+            } else {
+                PathValueKind::Terminal
+            };
+
+            if let Err(err) = path_state.check_and_update(&path, key_atom.span, value_kind) {
+                self.emit_path_error(err, key_atom.span);
+            }
+        }
+
+        self.emit_simple_entry(atoms);
+    }
+
+    /// Emit entry inside an object (no path state).
+    fn emit_entry_in_object(&mut self, atoms: &[Atom<'src>]) {
+        if atoms.is_empty() {
+            return;
+        }
+
+        let key_atom = &atoms[0];
+
+        // Check for invalid key types
+        if let AtomContent::Scalar {
+            kind: ScalarKind::Heredoc,
+            ..
+        } = &key_atom.content
+        {
+            self.event_queue.push_back(Event::Error {
+                span: key_atom.span,
+                kind: ParseErrorKind::InvalidKey,
+            });
+        }
+
+        // Check for dotted path (still allowed in nested objects)
+        if let AtomContent::Scalar {
+            value,
+            kind: ScalarKind::Bare,
+        } = &key_atom.content
+        {
+            if value.contains('.') {
+                self.emit_dotted_path_entry(value.clone(), key_atom.span, atoms, false);
+                return;
+            }
+        }
+
+        // Simple key - check for duplicates
+        let key_value = KeyValue::from_atom(key_atom);
+
+        if let ParserState::InObject { seen_keys, .. } = &mut self.state {
+            if let Some(&original_span) = seen_keys.get(&key_value) {
+                self.event_queue.push_back(Event::Error {
+                    span: key_atom.span,
+                    kind: ParseErrorKind::DuplicateKey {
+                        original: original_span,
+                    },
+                });
+            } else {
+                seen_keys.insert(key_value, key_atom.span);
+            }
+        }
+
+        self.emit_simple_entry(atoms);
+    }
+
+    /// Emit a simple (non-dotted) entry.
+    fn emit_simple_entry(&mut self, atoms: &[Atom<'src>]) {
+        let key_atom = &atoms[0];
+
+        self.event_queue.push_back(Event::EntryStart);
+        self.emit_atom_as_key(key_atom);
+
+        if atoms.len() == 1 {
+            self.event_queue.push_back(Event::Unit {
+                span: key_atom.span,
+            });
+        } else if atoms.len() >= 2 {
+            self.emit_atom_as_value(&atoms[1]);
+        }
+
+        if atoms.len() > 2 {
+            self.event_queue.push_back(Event::Error {
+                span: atoms[2].span,
+                kind: ParseErrorKind::TooManyAtoms,
+            });
+        }
+
+        self.event_queue.push_back(Event::EntryEnd);
+    }
+
+    /// Collect atoms for an entry.
     fn collect_entry_atoms(&mut self, first: Lexeme<'src>) -> Vec<Atom<'src>> {
         let mut atoms = Vec::new();
-
-        // Parse first atom
         let first_atom = self.parse_atom(first);
+        let first_atom_end = first_atom.span.end;
+        let first_is_bare = matches!(
+            &first_atom.content,
+            AtomContent::Scalar {
+                kind: ScalarKind::Bare,
+                ..
+            }
+        );
         atoms.push(first_atom);
 
-        // Collect more atoms until boundary
         loop {
-            let lexeme = self.lexer.next_lexeme();
+            let lexeme = self.source.next();
             match lexeme {
                 Lexeme::Eof
                 | Lexeme::Newline { .. }
                 | Lexeme::Comma { .. }
                 | Lexeme::ObjectEnd { .. }
-                | Lexeme::SeqEnd { .. }
-                | Lexeme::Comment { .. }
-                | Lexeme::DocComment { .. } => {
-                    // Put it back conceptually - we need to re-process this
-                    // Actually, we can't put it back, so we need a different approach
-                    // For now, handle this by pushing back to queue
-                    match lexeme {
-                        Lexeme::Comment { span, text } => {
-                            self.event_queue.push_back(Event::Comment { span, text });
-                        }
-                        Lexeme::DocComment { span, text } => {
-                            self.event_queue.push_back(Event::DocComment { span, text });
-                        }
-                        _ => {
-                            // These will be handled on next iteration
-                        }
-                    }
+                | Lexeme::SeqEnd { .. } => {
+                    self.source.stash(lexeme);
                     break;
+                }
+                Lexeme::Comment { span, text } => {
+                    self.event_queue.push_back(Event::Comment { span, text });
+                    break;
+                }
+                Lexeme::DocComment { span, text } => {
+                    self.event_queue.push_back(Event::DocComment { span, text });
+                    break;
+                }
+                Lexeme::ObjectStart { span } | Lexeme::SeqStart { span } => {
+                    // Check for MissingWhitespaceBeforeBlock: bare scalar immediately
+                    // followed by { or ( with no whitespace
+                    if atoms.len() == 1 && first_is_bare && first_atom_end == span.start {
+                        self.event_queue.push_back(Event::Error {
+                            span,
+                            kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
+                        });
+                    }
+                    let atom = self.parse_atom(lexeme);
+                    atoms.push(atom);
                 }
                 _ => {
                     let atom = self.parse_atom(lexeme);
@@ -319,59 +534,132 @@ impl<'src> Parser<'src> {
         atoms
     }
 
-    /// Parse a single atom from a lexeme.
+    /// Parse a single atom.
     fn parse_atom(&mut self, lexeme: Lexeme<'src>) -> Atom<'src> {
         match lexeme {
             Lexeme::Scalar { span, value, kind } => Atom {
                 span,
                 content: AtomContent::Scalar { value, kind },
             },
-
-            Lexeme::Unit { span } => Atom {
-                span,
-                content: AtomContent::Unit,
-            },
-
+            Lexeme::Unit { span } => {
+                // Check if this is an invalid tag like @.foo or @1digit
+                // The lexer produces Unit + Scalar when the tag name is invalid
+                let next = self.source.next();
+                if let Lexeme::Scalar {
+                    span: scalar_span,
+                    value,
+                    kind: ScalarKind::Bare,
+                } = &next
+                {
+                    // Adjacent spans = invalid tag (e.g., @.foo where @ is at 2 and .foo starts at 3)
+                    if scalar_span.start == span.end {
+                        return Atom {
+                            span: Span::new(span.start, scalar_span.end),
+                            content: AtomContent::Tag {
+                                name: "", // empty name signals invalid
+                                payload: Some(Box::new(Atom {
+                                    span: *scalar_span,
+                                    content: AtomContent::Scalar {
+                                        value: value.clone(),
+                                        kind: ScalarKind::Bare,
+                                    },
+                                })),
+                                invalid_name: true,
+                                error_span: Some(*scalar_span), // Error points at the name, not @
+                            },
+                        };
+                    }
+                }
+                // Not an invalid tag, stash and return unit
+                self.source.stash(next);
+                Atom {
+                    span,
+                    content: AtomContent::Unit,
+                }
+            }
             Lexeme::Tag {
                 span,
                 name,
                 has_payload,
             } => {
-                // Validate tag name
-                let invalid_name = !is_valid_tag_name(name);
+                // Check if this tag is followed by an adjacent scalar starting with '.'
+                // This happens with @Some.Type where lexer produces Tag("Some") + Scalar(".Type")
+                if !has_payload {
+                    let next = self.source.next();
+                    if let Lexeme::Scalar {
+                        span: scalar_span,
+                        value,
+                        kind: ScalarKind::Bare,
+                    } = &next
+                    {
+                        if scalar_span.start == span.end && value.starts_with('.') {
+                            // Combined invalid tag name like @Some.Type
+                            let combined_name_span = Span::new(span.start + 1, scalar_span.end);
+                            return Atom {
+                                span: Span::new(span.start, scalar_span.end),
+                                content: AtomContent::Tag {
+                                    name,
+                                    payload: None,
+                                    invalid_name: true,
+                                    error_span: Some(combined_name_span),
+                                },
+                            };
+                        }
+                    }
+                    self.source.stash(next);
+                }
 
+                let invalid_name = !is_valid_tag_name(name);
                 let payload = if has_payload {
-                    // Parse payload
-                    let next = self.lexer.next_lexeme();
+                    let next = self.source.next();
                     Some(Box::new(self.parse_atom(next)))
                 } else {
                     None
                 };
-
                 let end = payload.as_ref().map(|p| p.span.end).unwrap_or(span.end);
-
+                // For invalid tags from lexer, error span excludes the @
+                let error_span = if invalid_name {
+                    Some(Span::new(span.start + 1, span.end))
+                } else {
+                    None
+                };
                 Atom {
                     span: Span::new(span.start, end),
                     content: AtomContent::Tag {
                         name,
                         payload,
                         invalid_name,
+                        error_span,
                     },
                 }
             }
-
             Lexeme::ObjectStart { span } => self.parse_object_atom(span),
-
             Lexeme::SeqStart { span } => self.parse_sequence_atom(span),
-
             Lexeme::AttrKey { span, key } => self.parse_attributes(span, key),
-
-            Lexeme::Error { span, message } => Atom {
-                span,
-                content: AtomContent::Error { message },
-            },
-
-            // These shouldn't appear as atoms
+            Lexeme::Error { span, message } => {
+                // Check if this is an invalid escape error from a quoted string
+                if message.contains("escape") {
+                    // Extract the raw text to find escape positions
+                    let raw_text = &self.input[span.start as usize..span.end as usize];
+                    // Strip quotes if present
+                    let inner = if raw_text.starts_with('"') && raw_text.ends_with('"') {
+                        &raw_text[1..raw_text.len() - 1]
+                    } else {
+                        raw_text
+                    };
+                    Atom {
+                        span,
+                        content: AtomContent::InvalidEscapeScalar {
+                            raw_inner: Cow::Borrowed(inner),
+                        },
+                    }
+                } else {
+                    Atom {
+                        span,
+                        content: AtomContent::Error { message },
+                    }
+                }
+            }
             Lexeme::ObjectEnd { span }
             | Lexeme::SeqEnd { span }
             | Lexeme::Comma { span }
@@ -381,14 +669,12 @@ impl<'src> Parser<'src> {
                     message: "unexpected token",
                 },
             },
-
             Lexeme::Comment { span, .. } | Lexeme::DocComment { span, .. } => Atom {
                 span,
                 content: AtomContent::Error {
                     message: "unexpected comment",
                 },
             },
-
             Lexeme::Eof => Atom {
                 span: Span::new(self.input.len() as u32, self.input.len() as u32),
                 content: AtomContent::Error {
@@ -398,7 +684,7 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Parse an object atom { ... }.
+    /// Parse an object atom.
     fn parse_object_atom(&mut self, start_span: Span) -> Atom<'src> {
         let mut entries: Vec<ObjectEntry<'src>> = Vec::new();
         let mut seen_keys: HashMap<KeyValue, Span> = HashMap::new();
@@ -409,7 +695,7 @@ impl<'src> Parser<'src> {
         let mut end_span = start_span;
 
         loop {
-            let lexeme = self.lexer.next_lexeme();
+            let lexeme = self.source.next();
             match lexeme {
                 Lexeme::Eof => {
                     unclosed = true;
@@ -425,12 +711,8 @@ impl<'src> Parser<'src> {
                     end_span = span;
                     break;
                 }
-                Lexeme::Newline { .. } | Lexeme::Comma { .. } => {
-                    continue;
-                }
-                Lexeme::Comment { .. } => {
-                    continue;
-                }
+                Lexeme::Newline { .. } | Lexeme::Comma { .. } => continue,
+                Lexeme::Comment { .. } => continue,
                 Lexeme::DocComment { span, text } => {
                     pending_doc_comment = Some((span, text));
                 }
@@ -440,9 +722,8 @@ impl<'src> Parser<'src> {
 
                     if !entry_atoms.is_empty() {
                         let key = entry_atoms[0].clone();
+                        let key_value = KeyValue::from_atom(&key);
 
-                        // Check for duplicate key
-                        let key_value = KeyValue::from_atom(&key, self.input);
                         if let Some(&original_span) = seen_keys.get(&key_value) {
                             duplicate_key_spans.push((original_span, key.span));
                         } else {
@@ -485,7 +766,7 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Parse a sequence atom ( ... ).
+    /// Parse a sequence atom.
     fn parse_sequence_atom(&mut self, start_span: Span) -> Atom<'src> {
         let mut elements: Vec<Atom<'src>> = Vec::new();
         let mut unclosed = false;
@@ -493,7 +774,7 @@ impl<'src> Parser<'src> {
         let mut end_span = start_span;
 
         loop {
-            let lexeme = self.lexer.next_lexeme();
+            let lexeme = self.source.next();
             match lexeme {
                 Lexeme::Eof => {
                     unclosed = true;
@@ -503,16 +784,12 @@ impl<'src> Parser<'src> {
                     end_span = span;
                     break;
                 }
-                Lexeme::Newline { .. } => {
-                    continue;
-                }
+                Lexeme::Newline { .. } => continue,
                 Lexeme::Comma { span } => {
                     comma_spans.push(span);
                     continue;
                 }
-                Lexeme::Comment { .. } | Lexeme::DocComment { .. } => {
-                    continue;
-                }
+                Lexeme::Comment { .. } | Lexeme::DocComment { .. } => continue,
                 _ => {
                     let elem = self.parse_atom(lexeme);
                     elements.push(elem);
@@ -530,11 +807,9 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Parse attributes (key>value chains).
+    /// Parse attributes.
     fn parse_attributes(&mut self, first_span: Span, first_key: &'src str) -> Atom<'src> {
         let mut attrs = Vec::new();
-
-        // Parse first value
         let first_value = self.parse_attribute_value();
         attrs.push(AttributeEntry {
             key: first_key,
@@ -542,9 +817,8 @@ impl<'src> Parser<'src> {
             value: first_value,
         });
 
-        // Continue parsing more attributes
         loop {
-            let lexeme = self.lexer.next_lexeme();
+            let lexeme = self.source.next();
             match lexeme {
                 Lexeme::AttrKey { span, key } => {
                     let value = self.parse_attribute_value();
@@ -554,16 +828,8 @@ impl<'src> Parser<'src> {
                         value,
                     });
                 }
-                Lexeme::Eof
-                | Lexeme::Newline { .. }
-                | Lexeme::Comma { .. }
-                | Lexeme::ObjectEnd { .. }
-                | Lexeme::SeqEnd { .. } => {
-                    break;
-                }
-                _ => {
-                    // Not an attribute - this shouldn't happen in well-formed input
-                    // but we need to handle it
+                other => {
+                    self.source.stash(other);
                     break;
                 }
             }
@@ -573,7 +839,6 @@ impl<'src> Parser<'src> {
             .last()
             .map(|a| a.value.span.end)
             .unwrap_or(first_span.end);
-
         Atom {
             span: Span::new(first_span.start, end),
             content: AtomContent::Attributes(attrs),
@@ -582,122 +847,20 @@ impl<'src> Parser<'src> {
 
     /// Parse an attribute value.
     fn parse_attribute_value(&mut self) -> Atom<'src> {
-        let lexeme = self.lexer.next_lexeme();
+        let lexeme = self.source.next();
         self.parse_atom(lexeme)
     }
 
-    /// Emit events for an entry.
-    fn emit_entry(
-        &mut self,
-        atoms: &[Atom<'src>],
-        state: &mut ObjectState,
-        path_state: Option<&mut PathState>,
-    ) {
-        if atoms.is_empty() {
-            return;
-        }
-
-        let key_atom = &atoms[0];
-
-        // Check for invalid key types
-        match &key_atom.content {
-            AtomContent::Scalar {
-                kind: ScalarKind::Heredoc,
-                ..
-            } => {
-                self.event_queue.push_back(Event::Error {
-                    span: key_atom.span,
-                    kind: ParseErrorKind::InvalidKey,
-                });
-            }
-            AtomContent::Object { .. } | AtomContent::Sequence { .. } => {
-                self.event_queue.push_back(Event::Error {
-                    span: key_atom.span,
-                    kind: ParseErrorKind::InvalidKey,
-                });
-            }
-            _ => {}
-        }
-
-        // Check for dotted path
-        if let AtomContent::Scalar {
-            value,
-            kind: ScalarKind::Bare,
-        } = &key_atom.content
-        {
-            if value.contains('.') {
-                self.emit_dotted_path_entry(value, key_atom.span, atoms, state, path_state);
-                return;
-            }
-        }
-
-        // Simple key - check for duplicates
-        let key_value = KeyValue::from_atom(key_atom, self.input);
-        if let Some(&original_span) = state.seen_keys.get(&key_value) {
-            self.event_queue.push_back(Event::Error {
-                span: key_atom.span,
-                kind: ParseErrorKind::DuplicateKey {
-                    original: original_span,
-                },
-            });
-        } else {
-            state.seen_keys.insert(key_value.clone(), key_atom.span);
-        }
-
-        // Check path state if at root
-        if let Some(ps) = path_state {
-            let key_text = key_value.to_string();
-            let path = vec![key_text];
-            let value_kind = if atoms.len() >= 2 {
-                match &atoms[1].content {
-                    AtomContent::Object { .. } | AtomContent::Attributes(_) => {
-                        PathValueKind::Object
-                    }
-                    _ => PathValueKind::Terminal,
-                }
-            } else {
-                PathValueKind::Terminal
-            };
-
-            if let Err(err) = ps.check_and_update(&path, key_atom.span, value_kind) {
-                self.emit_path_error(err, key_atom.span);
-            }
-        }
-
-        // Emit entry events
-        self.event_queue.push_back(Event::EntryStart);
-        self.emit_atom_as_key(key_atom);
-
-        if atoms.len() == 1 {
-            self.event_queue.push_back(Event::Unit {
-                span: key_atom.span,
-            });
-        } else if atoms.len() >= 2 {
-            self.emit_atom_as_value(&atoms[1]);
-        }
-
-        if atoms.len() > 2 {
-            self.event_queue.push_back(Event::Error {
-                span: atoms[2].span,
-                kind: ParseErrorKind::TooManyAtoms,
-            });
-        }
-
-        self.event_queue.push_back(Event::EntryEnd);
-    }
-
-    /// Emit events for a dotted path entry.
+    /// Emit dotted path entry.
     fn emit_dotted_path_entry(
         &mut self,
-        path_text: &str,
+        path_text: Cow<'src, str>,
         path_span: Span,
         atoms: &[Atom<'src>],
-        state: &mut ObjectState,
-        path_state: Option<&mut PathState>,
+        check_path_state: bool,
     ) {
         let segments: Vec<&str> = path_text.split('.').collect();
 
-        // Validate path
         if segments.is_empty() || segments.iter().any(|s| s.is_empty()) {
             self.event_queue.push_back(Event::Error {
                 span: path_span,
@@ -708,32 +871,34 @@ impl<'src> Parser<'src> {
             return;
         }
 
-        // Check for duplicate at root level
-        let first_segment = segments[0].to_string();
-        let first_key_value = KeyValue::Scalar(first_segment.clone());
-        if state.seen_keys.contains_key(&first_key_value) {
-            // First segment already exists - that's okay for dotted paths,
-            // the path state will catch actual duplicates
-        } else {
-            state.seen_keys.insert(first_key_value, path_span);
-        }
-
-        // Check path state
-        if let Some(ps) = path_state {
-            let path: Vec<String> = segments.iter().map(|s| s.to_string()).collect();
-            let value_kind = if atoms.len() >= 2 {
-                match &atoms[1].content {
-                    AtomContent::Object { .. } | AtomContent::Attributes(_) => {
-                        PathValueKind::Object
-                    }
-                    _ => PathValueKind::Terminal,
+        // Check path state at root
+        if check_path_state {
+            if let ParserState::DocumentRoot {
+                seen_keys,
+                path_state,
+                ..
+            } = &mut self.state
+            {
+                let first_key_value = KeyValue::Scalar(segments[0].to_string());
+                if !seen_keys.contains_key(&first_key_value) {
+                    seen_keys.insert(first_key_value, path_span);
                 }
-            } else {
-                PathValueKind::Terminal
-            };
 
-            if let Err(err) = ps.check_and_update(&path, path_span, value_kind) {
-                self.emit_path_error(err, path_span);
+                let path: Vec<String> = segments.iter().map(|s| s.to_string()).collect();
+                let value_kind = if atoms.len() >= 2 {
+                    match &atoms[1].content {
+                        AtomContent::Object { .. } | AtomContent::Attributes(_) => {
+                            PathValueKind::Object
+                        }
+                        _ => PathValueKind::Terminal,
+                    }
+                } else {
+                    PathValueKind::Terminal
+                };
+
+                if let Err(err) = path_state.check_and_update(&path, path_span, value_kind) {
+                    self.emit_path_error(err, path_span);
+                }
             }
         }
 
@@ -745,16 +910,11 @@ impl<'src> Parser<'src> {
             let segment_len = segment.len() as u32;
             let segment_span = Span::new(current_offset, current_offset + segment_len);
 
-            if i > 0 {
-                self.event_queue.push_back(Event::EntryStart);
-            } else {
-                self.event_queue.push_back(Event::EntryStart);
-            }
-
+            self.event_queue.push_back(Event::EntryStart);
             self.event_queue.push_back(Event::Key {
                 span: segment_span,
                 tag: None,
-                payload: Some(Cow::Borrowed(*segment)),
+                payload: Some(Cow::Owned(segment.to_string())),
                 kind: ScalarKind::Bare,
             });
 
@@ -804,18 +964,24 @@ impl<'src> Parser<'src> {
         self.event_queue.push_back(Event::Error { span, kind });
     }
 
-    /// Emit an atom as a key event.
+    /// Get the span of just the heredoc opening marker (<<TAG\n).
+    fn heredoc_start_span(&self, heredoc_span: Span) -> Span {
+        let text = &self.input[heredoc_span.start as usize..heredoc_span.end as usize];
+        // Find the first newline - that's the end of the opening marker
+        let end_offset = text.find('\n').map(|i| i + 1).unwrap_or(text.len());
+        Span::new(heredoc_span.start, heredoc_span.start + end_offset as u32)
+    }
+
+    /// Emit atom as key.
     fn emit_atom_as_key(&mut self, atom: &Atom<'src>) {
         match &atom.content {
             AtomContent::Scalar { value, kind } => {
-                // Validate escapes for quoted scalars
-                if *kind == ScalarKind::Quoted {
-                    self.emit_escape_errors(value, atom.span);
-                }
+                // Note: escape validation is NOT done here because the lexer already
+                // processed valid escapes. Invalid escapes are handled via InvalidEscapeScalar.
                 self.event_queue.push_back(Event::Key {
                     span: atom.span,
                     tag: None,
-                    payload: Some(process_scalar(value, *kind)),
+                    payload: Some(process_scalar(value.clone(), *kind)),
                     kind: *kind,
                 });
             }
@@ -831,14 +997,14 @@ impl<'src> Parser<'src> {
                 name,
                 payload,
                 invalid_name,
+                error_span,
             } => {
                 if *invalid_name {
                     self.event_queue.push_back(Event::Error {
-                        span: atom.span,
+                        span: error_span.unwrap_or(atom.span),
                         kind: ParseErrorKind::InvalidTagName,
                     });
                 }
-
                 match payload {
                     None => {
                         self.event_queue.push_back(Event::Key {
@@ -856,7 +1022,7 @@ impl<'src> Parser<'src> {
                             self.event_queue.push_back(Event::Key {
                                 span: atom.span,
                                 tag: Some(name),
-                                payload: Some(process_scalar(value, *kind)),
+                                payload: Some(process_scalar(value.clone(), *kind)),
                                 kind: *kind,
                             });
                         }
@@ -877,10 +1043,26 @@ impl<'src> Parser<'src> {
                     },
                 }
             }
-            AtomContent::Object { .. }
-            | AtomContent::Sequence { .. }
-            | AtomContent::Attributes(_)
-            | AtomContent::Error { .. } => {
+            AtomContent::InvalidEscapeScalar { raw_inner } => {
+                // Emit the escape errors at their specific positions
+                let inner_start = atom.span.start + 1;
+                for (offset, seq) in validate_escapes(raw_inner) {
+                    let error_start = inner_start + offset as u32;
+                    let error_span = Span::new(error_start, error_start + seq.len() as u32);
+                    self.event_queue.push_back(Event::Error {
+                        span: error_span,
+                        kind: ParseErrorKind::InvalidEscape(seq),
+                    });
+                }
+                // Still emit a key event (with the partially-processed value)
+                self.event_queue.push_back(Event::Key {
+                    span: atom.span,
+                    tag: None,
+                    payload: Some(Cow::Owned(unescape_quoted(raw_inner).into_owned())),
+                    kind: ScalarKind::Quoted,
+                });
+            }
+            _ => {
                 self.event_queue.push_back(Event::Error {
                     span: atom.span,
                     kind: ParseErrorKind::InvalidKey,
@@ -889,16 +1071,15 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Emit an atom as a value.
+    /// Emit atom as value.
     fn emit_atom_as_value(&mut self, atom: &Atom<'src>) {
         match &atom.content {
             AtomContent::Scalar { value, kind } => {
-                if *kind == ScalarKind::Quoted {
-                    self.emit_escape_errors(value, atom.span);
-                }
+                // Note: escape validation is NOT done here because the lexer already
+                // processed valid escapes. Invalid escapes are handled via InvalidEscapeScalar.
                 self.event_queue.push_back(Event::Scalar {
                     span: atom.span,
-                    value: process_scalar(value, *kind),
+                    value: process_scalar(value.clone(), *kind),
                     kind: *kind,
                 });
             }
@@ -909,10 +1090,11 @@ impl<'src> Parser<'src> {
                 name,
                 payload,
                 invalid_name,
+                error_span,
             } => {
                 if *invalid_name {
                     self.event_queue.push_back(Event::Error {
-                        span: atom.span,
+                        span: error_span.unwrap_or(atom.span),
                         kind: ParseErrorKind::InvalidTagName,
                     });
                 }
@@ -1029,6 +1211,25 @@ impl<'src> Parser<'src> {
                 self.event_queue
                     .push_back(Event::ObjectEnd { span: atom.span });
             }
+            AtomContent::InvalidEscapeScalar { raw_inner } => {
+                // Emit the escape errors at their specific positions
+                // The span includes quotes, so offset by 1 for the opening quote
+                let inner_start = atom.span.start + 1;
+                for (offset, seq) in validate_escapes(raw_inner) {
+                    let error_start = inner_start + offset as u32;
+                    let error_span = Span::new(error_start, error_start + seq.len() as u32);
+                    self.event_queue.push_back(Event::Error {
+                        span: error_span,
+                        kind: ParseErrorKind::InvalidEscape(seq),
+                    });
+                }
+                // Also emit the scalar value (with invalid escapes replaced/kept)
+                self.event_queue.push_back(Event::Scalar {
+                    span: atom.span,
+                    value: Cow::Owned(unescape_quoted(raw_inner).into_owned()),
+                    kind: ScalarKind::Quoted,
+                });
+            }
             AtomContent::Error { .. } => {
                 self.event_queue.push_back(Event::Error {
                     span: atom.span,
@@ -1038,8 +1239,8 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Emit errors for invalid escape sequences in a quoted string.
-    fn emit_escape_errors(&mut self, text: &str, span: Span) {
+    /// Emit escape errors.
+    fn emit_escape_errors(&mut self, text: &Cow<'_, str>, span: Span) {
         for (offset, seq) in validate_escapes(text) {
             let error_start = span.start + offset as u32;
             let error_span = Span::new(error_start, error_start + seq.len() as u32);
@@ -1072,6 +1273,9 @@ enum AtomContent<'src> {
         name: &'src str,
         payload: Option<Box<Atom<'src>>>,
         invalid_name: bool,
+        /// For invalid tags, the span to use for the error (excludes @).
+        /// If None, uses atom.span.
+        error_span: Option<Span>,
     },
     Object {
         entries: Vec<ObjectEntry<'src>>,
@@ -1085,6 +1289,11 @@ enum AtomContent<'src> {
         comma_spans: Vec<Span>,
     },
     Attributes(Vec<AttributeEntry<'src>>),
+    /// A quoted scalar with invalid escape sequences.
+    /// We store the raw inner text (without quotes) to scan for escape errors.
+    InvalidEscapeScalar {
+        raw_inner: Cow<'src, str>,
+    },
     Error {
         message: &'static str,
     },
@@ -1120,26 +1329,27 @@ enum KeyValue {
 }
 
 impl KeyValue {
-    fn from_atom(atom: &Atom<'_>, _input: &str) -> Self {
+    fn from_atom(atom: &Atom<'_>) -> Self {
         match &atom.content {
             AtomContent::Scalar { value, kind } => {
-                KeyValue::Scalar(process_scalar(value, *kind).into_owned())
+                KeyValue::Scalar(process_scalar(value.clone(), *kind).into_owned())
             }
             AtomContent::Unit => KeyValue::Unit,
             AtomContent::Tag { name, payload, .. } => KeyValue::Tagged {
                 name: (*name).to_string(),
-                payload: payload
-                    .as_ref()
-                    .map(|p| Box::new(KeyValue::from_atom(p, _input))),
+                payload: payload.as_ref().map(|p| Box::new(KeyValue::from_atom(p))),
             },
             AtomContent::Object { .. } => KeyValue::Scalar("{}".into()),
             AtomContent::Sequence { .. } => KeyValue::Scalar("()".into()),
             AtomContent::Attributes(_) => KeyValue::Scalar("{}".into()),
+            AtomContent::InvalidEscapeScalar { raw_inner } => {
+                KeyValue::Scalar(unescape_quoted(raw_inner).into_owned())
+            }
             AtomContent::Error { .. } => KeyValue::Scalar("<error>".into()),
         }
     }
 
-    fn to_string(&self) -> String {
+    fn to_key_string(&self) -> String {
         match self {
             KeyValue::Scalar(s) => s.clone(),
             KeyValue::Unit => "@".to_string(),
@@ -1220,7 +1430,6 @@ impl PathState {
                 .or_insert((span, PathValueKind::Object));
         }
 
-        // Update state
         self.assigned_paths
             .insert(path.to_vec(), (span, value_kind));
         self.current_path = path.to_vec();
@@ -1233,7 +1442,6 @@ impl PathState {
 // Helpers
 // ============================================================================
 
-/// Check if a tag name is valid.
 fn is_valid_tag_name(name: &str) -> bool {
     let mut chars = name.chars();
     match chars.next() {
@@ -1243,18 +1451,16 @@ fn is_valid_tag_name(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
-/// Process a scalar value (handle escapes for quoted strings).
-fn process_scalar<'a>(value: &'a Cow<'a, str>, kind: ScalarKind) -> Cow<'a, str> {
+fn process_scalar(value: Cow<'_, str>, kind: ScalarKind) -> Cow<'static, str> {
     match kind {
-        ScalarKind::Bare | ScalarKind::Raw | ScalarKind::Heredoc => value.clone(),
-        ScalarKind::Quoted => unescape_quoted(value),
+        ScalarKind::Bare | ScalarKind::Raw | ScalarKind::Heredoc => Cow::Owned(value.into_owned()),
+        ScalarKind::Quoted => Cow::Owned(unescape_quoted(&value).into_owned()),
     }
 }
 
-/// Unescape a quoted string.
-fn unescape_quoted<'a>(text: &'a Cow<'a, str>) -> Cow<'a, str> {
+fn unescape_quoted(text: &str) -> Cow<'_, str> {
     if !text.contains('\\') {
-        return text.clone();
+        return Cow::Borrowed(text);
     }
 
     let mut result = String::with_capacity(text.len());
@@ -1285,7 +1491,7 @@ fn unescape_quoted<'a>(text: &'a Cow<'a, str>) -> Cow<'a, str> {
                             }
                         }
                     }
-                    Some(c) if c.is_ascii_hexdigit() => {
+                    Some(&c) if c.is_ascii_hexdigit() => {
                         let mut hex = String::with_capacity(4);
                         for _ in 0..4 {
                             if let Some(&c) = chars.peek() {
@@ -1322,7 +1528,6 @@ fn unescape_quoted<'a>(text: &'a Cow<'a, str>) -> Cow<'a, str> {
     Cow::Owned(result)
 }
 
-/// Validate escape sequences in a quoted string.
 fn validate_escapes(text: &str) -> Vec<(usize, String)> {
     let mut errors = Vec::new();
     let mut chars = text.char_indices().peekable();
@@ -1349,7 +1554,7 @@ fn validate_escapes(text: &str) -> Vec<(usize, String)> {
                         if !found_close || !valid {
                             let end = chars.peek().map(|(i, _)| *i).unwrap_or(text.len());
                             let seq = &text[escape_start..end.min(escape_start + 12)];
-                            errors.push((escape_start + 1, seq.to_string()));
+                            errors.push((escape_start, seq.to_string()));
                         }
                     }
                     Some((_, c)) if c.is_ascii_hexdigit() => {
@@ -1366,18 +1571,18 @@ fn validate_escapes(text: &str) -> Vec<(usize, String)> {
                         if count != 4 {
                             let end = chars.peek().map(|(i, _)| *i).unwrap_or(text.len());
                             let seq = &text[escape_start..end];
-                            errors.push((escape_start + 1, seq.to_string()));
+                            errors.push((escape_start, seq.to_string()));
                         }
                     }
                     _ => {
-                        errors.push((escape_start + 1, "\\u".to_string()));
+                        errors.push((escape_start, "\\u".to_string()));
                     }
                 },
                 Some((_, c)) => {
-                    errors.push((escape_start + 1, format!("\\{}", c)));
+                    errors.push((escape_start, format!("\\{}", c)));
                 }
                 None => {
-                    errors.push((escape_start + 1, "\\".to_string()));
+                    errors.push((escape_start, "\\".to_string()));
                 }
             }
         }

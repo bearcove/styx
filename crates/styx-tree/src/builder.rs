@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use styx_parse::{Event, ParseCallback, ParseErrorKind, Separator, Span};
+use styx_parse::{Event, ParseErrorKind, Separator, Span};
 
 use crate::value::{Entry, Object, Payload, Scalar, Sequence, Tag, Value};
 
@@ -204,8 +204,9 @@ impl Default for TreeBuilder {
     }
 }
 
-impl<'src> ParseCallback<'src> for TreeBuilder {
-    fn event(&mut self, event: Event<'src>) -> bool {
+impl TreeBuilder {
+    /// Process a parse event.
+    pub fn event(&mut self, event: Event<'_>) {
         match event {
             Event::DocumentStart | Event::DocumentEnd => {
                 // No-op for tree building
@@ -533,8 +534,6 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                 self.errors.push((kind, span));
             }
         }
-
-        true
     }
 }
 
@@ -565,12 +564,12 @@ fn append_doc_comment(target: &mut Option<String>, line: String) {
 
 #[cfg(test)]
 mod tests {
-    use styx_parse::Parser2;
+    use styx_parse::Parser;
 
     use super::*;
 
     fn parse(source: &str) -> Value {
-        let mut parser = Parser2::new(source);
+        let mut parser = Parser::new(source);
         let mut builder = TreeBuilder::new();
         while let Some(event) = parser.next_event() {
             eprintln!("Event: {:?}", event);
@@ -580,7 +579,7 @@ mod tests {
     }
 
     fn try_parse(source: &str) -> Result<Value, BuildError> {
-        let mut parser = Parser2::new(source);
+        let mut parser = Parser::new(source);
         let mut builder = TreeBuilder::new();
         while let Some(event) = parser.next_event() {
             builder.event(event);

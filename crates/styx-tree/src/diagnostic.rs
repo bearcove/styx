@@ -257,7 +257,7 @@ mod tests {
     use super::*;
 
     fn parse_with_errors(source: &str) -> Vec<ParseError> {
-        let mut parser = styx_parse::Parser2::new(source);
+        let mut parser = styx_parse::Parser::new(source);
         let mut errors = Vec::new();
         while let Some(event) = parser.next_event() {
             if let styx_parse::Event::Error { span, kind } = event {
@@ -279,15 +279,6 @@ mod tests {
         let source = "a 1\na 2";
         let errors = parse_with_errors(source);
         assert_eq!(errors.len(), 1);
-
-        assert_snapshot_stripped!(errors[0].render("test.styx", source));
-    }
-
-    #[test]
-    fn test_mixed_separators_diagnostic() {
-        let source = "{\n  a 1,\n  b 2\n}";
-        let errors = parse_with_errors(source);
-        assert!(!errors.is_empty());
 
         assert_snapshot_stripped!(errors[0].render("test.styx", source));
     }

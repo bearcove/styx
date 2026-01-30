@@ -3,7 +3,7 @@
 pub use styx_tokenizer::Span;
 
 mod events;
-pub use events::{Event, ParseErrorKind, ScalarKind};
+pub use events::{Event, ParseErrorKind, ScalarKind, Separator};
 
 mod lexer;
 pub use lexer::{Lexeme, Lexer};
