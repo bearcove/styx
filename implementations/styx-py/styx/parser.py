@@ -122,6 +122,41 @@ class Parser:
         start = self.current.span.start
         path_state = PathState()
 
+        # Skip any leading commas
+        while self._check(TokenType.COMMA):
+            self._advance()
+
+        # Check for explicit root object: { ... } at document start
+        if self._check(TokenType.LBRACE):
+            # Explicit root object - parse it and check for trailing content
+            obj = self._parse_object()
+            obj_value = Value(span=obj.span, payload=obj)
+            unit_key = Value(span=Span(-1, -1))
+            entries.append(Entry(key=unit_key, value=obj_value))
+
+            # After explicit root object, only whitespace/comments/EOF are allowed
+            # Skip commas (they don't count as "content")
+            while self._check(TokenType.COMMA):
+                self._advance()
+
+            if not self._check(TokenType.EOF):
+                # Find the span of trailing content
+                trailing_start = self.current.span.start
+                # Consume tokens to find the end of all trailing content
+                # Use EOF token's start as end (which includes trailing whitespace/newlines)
+                while not self._check(TokenType.EOF):
+                    self._advance()
+                trailing_end = self.current.span.start
+                raise ParseError(
+                    "trailing content after explicit root object",
+                    Span(trailing_start, trailing_end),
+                )
+
+            return Document(
+                entries=entries,
+                span=Span(start, self.current.span.end),
+            )
+
         while not self._check(TokenType.EOF):
             entry = self._parse_entry_with_path_check(path_state)
             if entry:
@@ -423,7 +458,10 @@ class Parser:
                 TokenType.LBRACE,
                 TokenType.LPAREN,
             ):
-                raise ParseError("invalid tag name", self.current.span)
+                # Error span includes the @ (it's part of the tag)
+                raise ParseError(
+                    "invalid tag name", Span(at_token.span.start, self.current.span.end)
+                )
             return Value(span=Span(at_token.span.start, at_token.span.end))
 
         if self._check(TokenType.TAG):

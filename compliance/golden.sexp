@@ -1112,11 +1112,11 @@
 ; file: compliance/corpus/07-invalid/invalid-escape.styx
 (error [13, 15] "parse error at 13-15: invalid escape sequence: \\x")
 ; file: compliance/corpus/07-invalid/invalid-tag-digit.styx
-(error [42, 45] "parse error at 42-45: invalid tag name")
+(error [41, 45] "parse error at 41-45: invalid tag name")
 ; file: compliance/corpus/07-invalid/invalid-tag-dot.styx
-(error [40, 44] "parse error at 40-44: invalid tag name")
+(error [39, 44] "parse error at 39-44: invalid tag name")
 ; file: compliance/corpus/07-invalid/invalid-tag-hyphen.styx
-(error [43, 47] "parse error at 43-47: invalid tag name")
+(error [42, 47] "parse error at 42-47: invalid tag name")
 ; file: compliance/corpus/07-invalid/invalid-tag-slash.styx
 (error [34, 46] "parse error at 34-46: invalid tag name")
 ; file: compliance/corpus/07-invalid/nest-into-scalar.styx

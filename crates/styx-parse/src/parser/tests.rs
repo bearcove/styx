@@ -324,7 +324,7 @@ fn test_invalid_tag_name_starts_with_digit() {
     assert_parse_errors(
         r#"
 x @123
-   ^^^ InvalidTagName
+  ^^^^ InvalidTagName
 "#,
     );
 }
@@ -713,7 +713,7 @@ fn test_invalid_tag_name_starts_with_hyphen() {
     assert_parse_errors(
         r#"
 x @-foo
-   ^^^^ InvalidTagName
+  ^^^^^ InvalidTagName
 "#,
     );
 }
@@ -723,7 +723,7 @@ fn test_invalid_tag_name_starts_with_dot() {
     assert_parse_errors(
         r#"
 x @.foo
-   ^^^^ InvalidTagName
+  ^^^^^ InvalidTagName
 "#,
     );
 }
@@ -1106,7 +1106,7 @@ fn test_invalid_tag_name_annotated() {
     assert_parse_errors(
         r#"
 x @123
-   ^^^ InvalidTagName
+  ^^^^ InvalidTagName
 "#,
     );
 }

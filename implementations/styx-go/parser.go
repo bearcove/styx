@@ -180,6 +180,49 @@ func (p *parser) parse() (*Document, error) {
 	start := p.current.Span.Start
 	ps := newPathState()
 
+	// Skip any leading commas
+	for p.check(TokenComma) {
+		p.advance()
+	}
+
+	// Check for explicit root object: { ... } at document start
+	if p.check(TokenLBrace) {
+		// Explicit root object - parse it and check for trailing content
+		obj, err := p.parseObject()
+		if err != nil {
+			return nil, err
+		}
+		objValue := &Value{Span: obj.Span, PayloadKind: PayloadObject, Object: obj}
+		unitKey := &Value{Span: Span{-1, -1}}
+		entries = append(entries, &Entry{Key: unitKey, Value: objValue})
+
+		// After explicit root object, only whitespace/comments/EOF are allowed
+		// Skip commas (they don't count as "content")
+		for p.check(TokenComma) {
+			p.advance()
+		}
+
+		if !p.check(TokenEOF) {
+			// Find the span of trailing content
+			trailingStart := p.current.Span.Start
+			// Consume tokens to find the end of all trailing content
+			// Use EOF token's start as end (which includes trailing whitespace/newlines)
+			for !p.check(TokenEOF) {
+				p.advance()
+			}
+			trailingEnd := p.current.Span.Start
+			return nil, &ParseError{
+				Message: "trailing content after explicit root object",
+				Span:    Span{trailingStart, trailingEnd},
+			}
+		}
+
+		return &Document{
+			Entries: entries,
+			Span:    Span{start, p.current.Span.End},
+		}, nil
+	}
+
 	for !p.check(TokenEOF) {
 		if p.err != nil {
 			return nil, p.err
@@ -513,7 +556,8 @@ func (p *parser) parseValue() (*Value, error) {
 	if p.check(TokenAt) {
 		atToken := p.advance()
 		if !p.current.HadWhitespaceBefore && !p.check(TokenEOF, TokenRBrace, TokenRParen, TokenComma, TokenLBrace, TokenLParen) {
-			return nil, &ParseError{Message: "invalid tag name", Span: p.current.Span}
+			// Error span includes the @ (it's part of the tag)
+			return nil, &ParseError{Message: "invalid tag name", Span: Span{atToken.Span.Start, p.current.Span.End}}
 		}
 		return &Value{Span: Span{atToken.Span.Start, atToken.Span.End}}, nil
 	}

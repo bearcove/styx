@@ -59,6 +59,46 @@ export class Parser {
     const start = this.current.span.start;
     const pathState = new PathState();
 
+    // Check for explicit root object: { ... } at document start
+    // Skip any leading commas first (just like parseEntryWithPathCheck does)
+    while (this.check("comma")) {
+      this.advance();
+    }
+
+    if (this.check("lbrace")) {
+      // Explicit root object - parse it and check for trailing content
+      const obj = this.parseObject();
+      const objValue: Value = { payload: obj, span: obj.span };
+      const unitKey: Value = { span: { start: -1, end: -1 } };
+      entries.push({ key: unitKey, value: objValue });
+
+      // After explicit root object, only whitespace/comments/EOF are allowed
+      // Skip commas (they don't count as "content")
+      while (this.check("comma")) {
+        this.advance();
+      }
+
+      if (!this.check("eof")) {
+        // Find the span of trailing content
+        const trailingStart = this.current.span.start;
+        // Consume tokens to find the end of all trailing content
+        // Use EOF token's start as end (which includes trailing whitespace/newlines)
+        while (!this.check("eof")) {
+          this.advance();
+        }
+        const trailingEnd = this.current.span.start;
+        throw new ParseError("trailing content after explicit root object", {
+          start: trailingStart,
+          end: trailingEnd,
+        });
+      }
+
+      return {
+        entries,
+        span: { start, end: this.current.span.end },
+      };
+    }
+
     while (!this.check("eof")) {
       const entry = this.parseEntryWithPathCheck(pathState);
       if (entry) {
@@ -420,8 +460,11 @@ export class Parser {
         !this.check("eof", "rbrace", "rparen", "comma", "lbrace", "lparen")
       ) {
         // This looks like @123 or @-foo - invalid tag name
-        // Error span starts after the @, just covering the invalid name
-        throw new ParseError(`invalid tag name`, this.current.span);
+        // Error span includes the @ (it's part of the tag)
+        throw new ParseError(`invalid tag name`, {
+          start: atToken.span.start,
+          end: this.current.span.end,
+        });
       }
       return { span: { start: atToken.span.start, end: atToken.span.end } };
     }

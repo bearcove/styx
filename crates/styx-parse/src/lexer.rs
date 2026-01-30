@@ -171,6 +171,16 @@ impl<'src> Lexer<'src> {
             },
 
             TokenKind::At => {
+                // Check if followed immediately by a bare scalar (invalid tag like @123)
+                let next = self.peek_token();
+                if next.span.start == tok.span.end && next.kind == TokenKind::BareScalar {
+                    // Consume the adjacent token to include it in the error span
+                    let bad_tok = self.next_token();
+                    return Lexeme::Error {
+                        span: Span::new(tok.span.start, bad_tok.span.end),
+                        message: "invalid tag name",
+                    };
+                }
                 // Standalone @ = unit
                 Lexeme::Unit { span: tok.span }
             }
@@ -679,13 +689,12 @@ mod tests {
 
     #[test]
     fn test_at_followed_by_digit() {
-        // @123 is not a tag - it's unit (@) followed by scalar (123)
+        // @123 is an invalid tag name - the error span includes both @ and 123
         let lexemes = lex("@123");
-        assert!(matches!(&lexemes[0], Lexeme::Unit { .. }));
         assert!(matches!(
-            &lexemes[1],
-            Lexeme::Scalar {
-                kind: ScalarKind::Bare,
+            &lexemes[0],
+            Lexeme::Error {
+                message: "invalid tag name",
                 ..
             }
         ));

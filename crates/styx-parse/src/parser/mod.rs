@@ -281,13 +281,12 @@ impl<'src> Parser<'src> {
                         pending_doc_comment,
                         ..
                     } = &mut self.state
+                        && let Some(span) = pending_doc_comment.take()
                     {
-                        if let Some(span) = pending_doc_comment.take() {
-                            self.event_queue.push_back(Event::Error {
-                                span,
-                                kind: ParseErrorKind::DanglingDocComment,
-                            });
-                        }
+                        self.event_queue.push_back(Event::Error {
+                            span,
+                            kind: ParseErrorKind::DanglingDocComment,
+                        });
                     }
                     self.event_queue.push_back(Event::Error {
                         span: start,
@@ -302,13 +301,12 @@ impl<'src> Parser<'src> {
                         pending_doc_comment,
                         ..
                     } = &mut self.state
+                        && let Some(doc_span) = pending_doc_comment.take()
                     {
-                        if let Some(doc_span) = pending_doc_comment.take() {
-                            self.event_queue.push_back(Event::Error {
-                                span: doc_span,
-                                kind: ParseErrorKind::DanglingDocComment,
-                            });
-                        }
+                        self.event_queue.push_back(Event::Error {
+                            span: doc_span,
+                            kind: ParseErrorKind::DanglingDocComment,
+                        });
                     }
                     self.pop_state();
                     return Some(Event::ObjectEnd { span });
@@ -645,12 +643,8 @@ impl<'src> Parser<'src> {
                     None
                 };
                 let end = payload.as_ref().map(|p| p.span.end).unwrap_or(span.end);
-                // For invalid tags from lexer, error span excludes the @
-                let error_span = if invalid_name {
-                    Some(Span::new(span.start + 1, span.end))
-                } else {
-                    None
-                };
+                // For invalid tags, error span includes the @ (it's part of the tag)
+                let error_span = if invalid_name { Some(span) } else { None };
                 Atom {
                     span: Span::new(span.start, end),
                     content: AtomContent::Tag {

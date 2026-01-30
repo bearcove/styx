@@ -94,6 +94,23 @@ public struct Parser {
         // (comments are already skipped by the lexer)
         if check(.lBrace) {
             let obj = try parseObject()
+
+            // After explicit root object, only whitespace/comments/EOF are allowed
+            if !check(.eof) {
+                // Find the span of trailing content
+                let trailingStart = current.span.start
+                // Consume tokens to find the end of all trailing content
+                // Use EOF token's start as end (which includes trailing whitespace/newlines)
+                while !check(.eof) {
+                    _ = advance()
+                }
+                let trailingEnd = current.span.start
+                throw ParseError(
+                    message: "trailing content after explicit root object",
+                    span: Span(start: trailingStart, end: trailingEnd)
+                )
+            }
+
             // Return a single entry with unit key and object value
             return Document(entries: [
                 Entry(key: Value.unit(span: Span.invalid), value: obj)
@@ -389,19 +406,18 @@ public struct Parser {
         let tagName = String(fullText.prefix(tagNameLen))
         let nameEnd = nameToken.span.start + tagNameLen
 
-        // Validate tag name
+        // Validate tag name - error span includes the @ (it's part of the tag)
         if tagName.isEmpty {
             throw ParseError(message: "expected tag name", span: nameToken.span)
         }
         if let firstChar = tagName.first {
             if firstChar.isNumber || firstChar == "-" {
-                // Invalid first character - error span is just the tag name (not @)
-                throw ParseError(message: "invalid tag name", span: nameToken.span)
+                throw ParseError(
+                    message: "invalid tag name", span: Span(start: start, end: nameToken.span.end))
             }
         }
         for char in tagName {
             if !(char.isLetter || char.isNumber || char == "-" || char == "_") {
-                // Invalid character in middle - error span includes the @
                 throw ParseError(
                     message: "invalid tag name", span: Span(start: start, end: nameToken.span.end))
             }

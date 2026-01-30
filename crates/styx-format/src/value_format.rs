@@ -207,7 +207,7 @@ impl ValueFormatter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use styx_parse::{ScalarKind, Separator};
+    use styx_parse::ScalarKind;
     use styx_tree::{Object, Payload, Scalar, Sequence, Tag};
 
     fn scalar(text: &str) -> Value {
@@ -254,7 +254,6 @@ mod tests {
             tag: None,
             payload: Some(Payload::Object(Object {
                 entries,
-                separator: Separator::Newline,
                 span: None,
             })),
             span: None,
@@ -286,7 +285,6 @@ mod tests {
             tag: None,
             payload: Some(Payload::Object(Object {
                 entries: vec![entry("name", scalar("Alice")), entry("age", scalar("30"))],
-                separator: Separator::Comma,
                 span: None,
             })),
             span: None,
@@ -339,26 +337,24 @@ mod tests {
     // Edge case tests for formatting
     // =========================================================================
 
-    /// Helper to create a newline-separated object value
+    /// Helper to create an object value
     fn obj_multiline(entries: Vec<Entry>) -> Value {
         Value {
             tag: None,
             payload: Some(Payload::Object(Object {
                 entries,
-                separator: Separator::Newline,
                 span: None,
             })),
             span: None,
         }
     }
 
-    /// Helper to create a comma-separated (inline) object value
+    /// Helper to create an inline object value (same as multiline now)
     fn obj_inline(entries: Vec<Entry>) -> Value {
         Value {
             tag: None,
             payload: Some(Payload::Object(Object {
                 entries,
-                separator: Separator::Comma,
                 span: None,
             })),
             span: None,
@@ -366,7 +362,7 @@ mod tests {
     }
 
     /// Helper to create a tagged value with object payload
-    fn tagged_obj(tag_name: &str, entries: Vec<Entry>, separator: Separator) -> Value {
+    fn tagged_obj(tag_name: &str, entries: Vec<Entry>) -> Value {
         Value {
             tag: Some(Tag {
                 name: tag_name.to_string(),
@@ -374,7 +370,6 @@ mod tests {
             }),
             payload: Some(Payload::Object(Object {
                 entries,
-                separator,
                 span: None,
             })),
             span: None,
@@ -481,7 +476,6 @@ mod tests {
             tagged_obj(
                 "object",
                 vec![entry("name", tagged("string")), entry("age", tagged("int"))],
-                Separator::Newline,
             ),
         )]);
 
@@ -497,7 +491,6 @@ mod tests {
             tagged_obj(
                 "point",
                 vec![entry("x", scalar("1")), entry("y", scalar("2"))],
-                Separator::Comma,
             ),
         )]);
 
@@ -520,7 +513,6 @@ mod tests {
                 entry("name", tagged("string")),
                 entry("port", tagged("int")),
             ],
-            Separator::Newline,
         );
         let schema = obj_multiline(vec![unit_entry(schema_obj)]);
         let root = obj_multiline(vec![entry("meta", meta), entry("schema", schema)]);
@@ -663,7 +655,6 @@ mod tests {
                     entry_with_doc("host", scalar("localhost"), "The server hostname"),
                     entry_with_doc("port", scalar("8080"), "The server port"),
                 ],
-                separator: Separator::Newline,
                 span: None,
             })),
             span: None,
@@ -724,7 +715,6 @@ mod tests {
                 entry("host", tagged("string")),
                 entry("port", tagged("int")),
             ],
-            Separator::Newline,
         );
 
         let root_schema = tagged_obj(
@@ -733,7 +723,6 @@ mod tests {
                 entry("name", tagged("string")),
                 entry("server", server_schema),
             ],
-            Separator::Newline,
         );
 
         let schema = obj_multiline(vec![unit_entry(root_schema)]);
@@ -881,11 +870,7 @@ mod tests {
 
     #[test]
     fn blank_line_13_tagged_block() {
-        let tagged_block = tagged_obj(
-            "object",
-            vec![entry("field", tagged("string"))],
-            Separator::Newline,
-        );
+        let tagged_block = tagged_obj("object", vec![entry("field", tagged("string"))]);
         let obj = obj_multiline(vec![
             entry("name", scalar("test")),
             entry("schema", tagged_block),
@@ -907,11 +892,7 @@ mod tests {
             entry("id", scalar("test")),
             entry("version", scalar("1")),
         ]);
-        let schema_content = tagged_obj(
-            "object",
-            vec![entry("name", tagged("string"))],
-            Separator::Newline,
-        );
+        let schema_content = tagged_obj("object", vec![entry("name", tagged("string"))]);
         let schema = obj_multiline(vec![unit_entry(schema_content)]);
         let obj = obj_multiline(vec![entry("meta", meta), entry("schema", schema)]);
         assert_matches_cst_formatter(&obj, "meta then schema block");
