@@ -1,4 +1,5 @@
 use crate::event::Event;
+use crate::lexer::Lexer;
 
 #[allow(unused_imports)]
 use crate::trace;

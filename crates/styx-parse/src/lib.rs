@@ -21,6 +21,7 @@ pub(crate) use trace;
 
 pub mod callback;
 pub mod event;
+pub mod lexer;
 pub mod parser4;
 mod span;
 mod token;
@@ -28,6 +29,7 @@ mod tokenizer;
 
 pub use callback::ParseCallback;
 pub use event::{Event, ParseErrorKind, ScalarKind, Separator};
+pub use lexer::{Lexeme, Lexer};
 pub use parser4::Parser4;
 pub use span::Span;
 pub use token::{Token, TokenKind};
