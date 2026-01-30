@@ -1,3 +1,5 @@
+//! DO NOT DELETE ANY TESTS OR WEAKEN THEM IN ANY WAY
+
 use super::*;
 use facet_testhelpers::test;
 use styx_testhelpers::{ActualError, assert_annotated_errors, source_without_annotations};
