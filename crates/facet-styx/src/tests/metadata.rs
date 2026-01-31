@@ -1,3 +1,22 @@
+/// A metadata container that captures both span and doc metadata.
+///
+/// This is useful for validation errors that need to point back to source locations,
+/// while also preserving doc comments.
+#[derive(Debug, Clone, Facet)]
+#[facet(metadata_container)]
+pub struct WithMeta<T> {
+    pub value: T,
+
+    #[facet(metadata = "span")]
+    pub span: Option<Span>,
+
+    #[facet(metadata = "doc")]
+    pub doc: Option<Vec<String>>,
+
+    #[facet(metadata = "tag")]
+    pub tag: Option<String>,
+}
+
 use super::super::*;
 use facet::Facet;
 use facet_reflect::Span;
@@ -8,15 +27,21 @@ struct ParseTest<'a> {
 }
 
 impl<'a> ParseTest<'a> {
-    fn new<T: Facet<'static>>(source: &'a str, f: impl FnOnce(&Self, T)) {
+    fn parse<T: Facet<'static>>(source: &'a str, f: impl FnOnce(&Self, T)) {
         let test = Self { source };
         let parsed: T = from_str(source).unwrap();
         f(&test, parsed);
     }
 
     #[track_caller]
-    fn assert_is<T, E>(&self, meta: &WithMeta<T>, expected: E, span_text: &str)
-    where
+    fn assert_is<T, E>(
+        &self,
+        meta: &WithMeta<T>,
+        expected: E,
+        span_text: &str,
+        doc: Option<&str>,
+        tag: Option<&str>,
+    ) where
         T: PartialEq + std::fmt::Debug,
         E: Into<T>,
     {
@@ -24,21 +49,17 @@ impl<'a> ParseTest<'a> {
         let span = meta.span.expect("expected span to be present");
         let actual = &self.source[span.offset as usize..(span.offset + span.len) as usize];
         assert_eq!(actual, span_text, "span mismatch");
+        if let Some(doc) = doc {
+            let meta_doc_lines = meta.doc.as_ref().unwrap();
+            assert_eq!(meta_doc_lines.len(), 1);
+            let meta_doc = &meta_doc_lines[1];
+            assert_eq!(meta_doc, doc, "doc mismatch");
+        }
+        if let Some(tag) = tag {
+            let meta_tag = meta.tag.as_ref().unwrap();
+            assert_eq!(meta_tag, tag, "tag mismatch");
+        }
     }
-}
-
-/// A metadata container that captures both span and doc metadata.
-///
-/// This is useful for validation errors that need to point back to source locations,
-/// while also preserving doc comments.
-#[derive(Debug, Clone, Facet)]
-#[facet(metadata_container)]
-pub struct WithMeta<T> {
-    pub value: T,
-    #[facet(metadata = "span")]
-    pub span: Option<Span>,
-    #[facet(metadata = "doc")]
-    pub doc: Option<Vec<String>>,
 }
 
 impl<T: PartialEq> PartialEq for WithMeta<T> {
@@ -71,14 +92,14 @@ fn test_spanned_doc_as_struct_field() {
         port: WithMeta<u16>,
     }
 
-    ParseTest::new(
+    ParseTest::parse(
         r#"
 name myapp
 port 8080
 "#,
         |t, c: Config| {
-            t.assert_is(&c.name, "myapp", "myapp");
-            t.assert_is(&c.port, 8080u16, "8080");
+            t.assert_is(&c.name, "myapp", "myapp", None, None);
+            t.assert_is(&c.port, 8080u16, "8080", None, None);
         },
     );
 }
@@ -90,7 +111,7 @@ fn test_spanned_doc_as_struct_field_with_docs() {
         name: WithMeta<String>,
     }
 
-    ParseTest::new(
+    ParseTest::parse(
         r#"
 /// The application name
 name myapp
@@ -112,7 +133,7 @@ fn test_spanned_doc_as_map_value() {
         items: IndexMap<String, WithMeta<String>>,
     }
 
-    ParseTest::new(
+    ParseTest::parse(
         r#"
 foo bar
 baz qux
@@ -135,7 +156,7 @@ fn test_spanned_doc_as_map_key() {
         items: IndexMap<WithMeta<String>, String>,
     }
 
-    ParseTest::new(
+    ParseTest::parse(
         r#"
 foo bar
 baz qux
@@ -159,7 +180,7 @@ fn test_spanned_doc_as_map_key_and_value() {
         items: IndexMap<WithMeta<String>, WithMeta<String>>,
     }
 
-    ParseTest::new(
+    ParseTest::parse(
         r#"
 foo bar
 baz qux
@@ -183,7 +204,7 @@ fn test_spanned_doc_in_array() {
         items: Vec<WithMeta<String>>,
     }
 
-    ParseTest::new(
+    ParseTest::parse(
         r#"
 items (alpha beta gamma)
 "#,
@@ -208,7 +229,7 @@ fn test_spanned_doc_in_nested_struct() {
         inner: Inner,
     }
 
-    ParseTest::new(
+    ParseTest::parse(
         r#"
 inner { value 42 }
 "#,
@@ -225,7 +246,7 @@ fn test_spanned_doc_with_option_present() {
         name: Option<WithMeta<String>>,
     }
 
-    ParseTest::new(
+    ParseTest::parse(
         r#"
 name hello
 "#,
@@ -243,7 +264,7 @@ fn test_spanned_doc_with_option_absent() {
         other: String,
     }
 
-    ParseTest::new(
+    ParseTest::parse(
         r#"
 other world
 "#,
@@ -263,7 +284,7 @@ fn test_spanned_doc_with_integers() {
         c: WithMeta<i8>,
     }
 
-    ParseTest::new(
+    ParseTest::parse(
         r#"
 a -42
 b 999
@@ -285,7 +306,7 @@ fn test_spanned_doc_with_booleans() {
         debug: WithMeta<bool>,
     }
 
-    ParseTest::new(
+    ParseTest::parse(
         r#"
 enabled true
 debug false
@@ -307,7 +328,7 @@ fn test_spanned_doc_in_flattened_map_inline() {
         items: IndexMap<WithMeta<String>, WithMeta<String>>,
     }
 
-    ParseTest::new(
+    ParseTest::parse(
         r#"
 {foo bar, baz qux}
 "#,
