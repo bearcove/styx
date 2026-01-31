@@ -515,7 +515,6 @@ dependencies = [
 [[package]]
 name = "facet"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
 dependencies = [
  "autocfg",
  "facet-core",
@@ -540,7 +539,6 @@ dependencies = [
 [[package]]
 name = "facet-core"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
 dependencies = [
  "autocfg",
  "camino",
@@ -553,7 +551,6 @@ dependencies = [
 [[package]]
 name = "facet-dessert"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -562,7 +559,7 @@ dependencies = [
 [[package]]
 name = "facet-error"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
+source = "git+https://github.com/facet-rs/facet?branch=main#9bc5fbdcf61e7b5c4945c7802a05dbcc9615f819"
 dependencies = [
  "facet",
 ]
@@ -570,7 +567,6 @@ dependencies = [
 [[package]]
 name = "facet-format"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
 dependencies = [
  "facet-core",
  "facet-dessert",
@@ -583,7 +579,7 @@ dependencies = [
 [[package]]
 name = "facet-json"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
+source = "git+https://github.com/facet-rs/facet?branch=main#9bc5fbdcf61e7b5c4945c7802a05dbcc9615f819"
 dependencies = [
  "facet",
  "facet-core",
@@ -595,7 +591,6 @@ dependencies = [
 [[package]]
 name = "facet-macro-parse"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -605,7 +600,6 @@ dependencies = [
 [[package]]
 name = "facet-macro-types"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -615,7 +609,6 @@ dependencies = [
 [[package]]
 name = "facet-macros"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
 dependencies = [
  "facet-macros-impl",
 ]
@@ -623,7 +616,6 @@ dependencies = [
 [[package]]
 name = "facet-macros-impl"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
 dependencies = [
  "facet-macro-parse",
  "facet-macro-types",
@@ -636,7 +628,6 @@ dependencies = [
 [[package]]
 name = "facet-path"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
 dependencies = [
  "facet-core",
 ]
@@ -644,7 +635,6 @@ dependencies = [
 [[package]]
 name = "facet-postcard"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
 dependencies = [
  "camino",
  "facet-core",
@@ -658,7 +648,6 @@ dependencies = [
 [[package]]
 name = "facet-pretty"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -668,7 +657,6 @@ dependencies = [
 [[package]]
 name = "facet-reflect"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
 dependencies = [
  "facet-core",
  "facet-path",
@@ -681,7 +669,6 @@ dependencies = [
 [[package]]
 name = "facet-solver"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -698,6 +685,7 @@ dependencies = [
  "facet-reflect",
  "facet-testhelpers",
  "figue",
+ "indexmap",
  "insta",
  "serde_json",
  "strip-ansi-escapes",
@@ -711,7 +699,7 @@ dependencies = [
 [[package]]
 name = "facet-testhelpers"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
+source = "git+https://github.com/facet-rs/facet?branch=main#9bc5fbdcf61e7b5c4945c7802a05dbcc9615f819"
 dependencies = [
  "color-backtrace",
  "facet-testhelpers-macros",
@@ -723,7 +711,7 @@ dependencies = [
 [[package]]
 name = "facet-testhelpers-macros"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
+source = "git+https://github.com/facet-rs/facet?branch=main#9bc5fbdcf61e7b5c4945c7802a05dbcc9615f819"
 dependencies = [
  "quote",
  "unsynn",
@@ -732,7 +720,7 @@ dependencies = [
 [[package]]
 name = "facet-toml"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
+source = "git+https://github.com/facet-rs/facet?branch=main#9bc5fbdcf61e7b5c4945c7802a05dbcc9615f819"
 dependencies = [
  "facet-core",
  "facet-format",
@@ -743,7 +731,6 @@ dependencies = [
 [[package]]
 name = "facet-value"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#384aa45a62dbd88eb36dc88f80865db3a84027db"
 dependencies = [
  "facet-core",
  "facet-format",
@@ -1178,9 +1165,9 @@ dependencies = [
 
 [[package]]
 name = "insta"
-version = "1.46.1"
+version = "1.46.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "248b42847813a1550dafd15296fd9748c651d0c32194559dbc05d804d54b21e8"
+checksum = "38c91d64f9ad425e80200a50a0e8b8a641680b44e33ce832efe5b8bc65161b07"
 dependencies = [
  "console",
  "once_cell",
@@ -2162,8 +2149,10 @@ dependencies = [
 name = "styx-parse"
 version = "1.0.1"
 dependencies = [
+ "ariadne",
  "facet",
  "facet-testhelpers",
+ "similar",
  "styx-testhelpers",
  "styx-tokenizer",
  "tracing",
@@ -3060,6 +3049,6 @@ dependencies = [
 
 [[package]]
 name = "zmij"
-version = "1.0.17"
+version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02aae0f83f69aafc94776e879363e9771d7ecbffe2c7fbb6c14c5e00dfe88439"
+checksum = "1966f8ac2c1f76987d69a74d0e0f929241c10e78136434e3be70ff7f58f64214"
