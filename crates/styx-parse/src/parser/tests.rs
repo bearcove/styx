@@ -107,36 +107,27 @@ mod event_assert {
 
         for (i, event) in events.iter().enumerate() {
             let label = format_event(event);
-            let span = event_span(event);
+            let (start, end) = event_span(event);
 
             eprintln!("Event {}: {}", i + 1, label);
 
-            if let Some((start, end)) = span {
-                let mut buf = Vec::new();
-                Report::build(ReportKind::Custom("", Color::Cyan), ("", start..end))
-                    .with_label(
-                        Label::new(("", start..end))
-                            .with_message(&label)
-                            .with_color(Color::Cyan),
-                    )
-                    .finish()
-                    .write(("", Source::from(source)), &mut buf)
-                    .unwrap();
-                eprintln!("{}", String::from_utf8_lossy(&buf));
-            } else {
-                eprintln!("  (no span)\n");
-            }
+            let mut buf = Vec::new();
+            Report::build(ReportKind::Custom("", Color::Cyan), ("", start..end))
+                .with_label(
+                    Label::new(("", start..end))
+                        .with_message(&label)
+                        .with_color(Color::Cyan),
+                )
+                .finish()
+                .write(("", Source::from(source)), &mut buf)
+                .unwrap();
+            eprintln!("{}", String::from_utf8_lossy(&buf));
         }
     }
 
-    /// Extract span from an event, if it has one.
-    fn event_span(event: &Event<'_>) -> Option<(usize, usize)> {
-        match &event.kind {
-            EventKind::DocumentStart | EventKind::DocumentEnd => None,
-            EventKind::EntryStart | EventKind::EntryEnd => None,
-            EventKind::TagEnd => None,
-            _ => Some((event.span.start as usize, event.span.end as usize)),
-        }
+    /// Extract span from an event.
+    fn event_span(event: &Event<'_>) -> (usize, usize) {
+        (event.span.start as usize, event.span.end as usize)
     }
 
     /// Assert that events match the expected string representation.
