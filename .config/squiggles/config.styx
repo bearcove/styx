@@ -1,5 +1,29 @@
 @schema {id crate:squiggles-config@1, cli squiggles}
 
-enabled false
+enabled true
 captain true
 scan_exclude (editors/zed-styx)
+
+packages {
+    facet-styx {
+        features (tracing)
+        env {
+            RUST_BACKTRACE 1
+            FACET_LOG trace
+        }
+    }
+    styx-parse {
+        features ()
+        env {
+            RUST_BACKTRACE 1
+            FACET_LOG trace
+        }
+    }
+    styx-tree {
+        features ()
+        env {
+            RUST_BACKTRACE 1
+            FACET_LOG trace
+        }
+    }
+}
