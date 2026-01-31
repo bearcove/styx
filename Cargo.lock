@@ -688,6 +688,7 @@ dependencies = [
  "indexmap",
  "insta",
  "serde_json",
+ "similar",
  "strip-ansi-escapes",
  "styx-format",
  "styx-parse",
