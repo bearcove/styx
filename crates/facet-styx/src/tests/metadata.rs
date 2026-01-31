@@ -39,7 +39,7 @@ impl<'a> ParseTest<'a> {
         meta: &WithMeta<T>,
         expected: E,
         span_text: &str,
-        doc: Option<&str>,
+        doc: Option<&[&str]>,
         tag: Option<&str>,
     ) where
         T: PartialEq + std::fmt::Debug,
@@ -49,29 +49,22 @@ impl<'a> ParseTest<'a> {
         let span = meta.span.expect("expected span to be present");
         let actual = &self.source[span.offset as usize..(span.offset + span.len) as usize];
         assert_eq!(actual, span_text, "span mismatch");
-        if let Some(doc) = doc {
-            let meta_doc_lines = meta.doc.as_ref().unwrap();
-            assert_eq!(meta_doc_lines.len(), 1);
-            let meta_doc = &meta_doc_lines[0];
-            assert_eq!(meta_doc, doc, "doc mismatch");
+        if let Some(expected_lines) = doc {
+            let meta_doc_lines = meta.doc.as_ref().expect("expected doc to be present");
+            assert_eq!(
+                meta_doc_lines.len(),
+                expected_lines.len(),
+                "doc line count mismatch"
+            );
+            for (i, (actual, expected)) in
+                meta_doc_lines.iter().zip(expected_lines.iter()).enumerate()
+            {
+                assert_eq!(actual, *expected, "doc line {} mismatch", i);
+            }
         }
         if let Some(tag) = tag {
             let meta_tag = meta.tag.as_ref().unwrap();
             assert_eq!(meta_tag, tag, "tag mismatch");
-        }
-    }
-
-    #[track_caller]
-    fn assert_doc_lines<T>(&self, meta: &WithMeta<T>, expected_lines: &[&str]) {
-        let meta_doc_lines = meta.doc.as_ref().expect("expected doc to be present");
-        assert_eq!(
-            meta_doc_lines.len(),
-            expected_lines.len(),
-            "doc line count mismatch"
-        );
-        for (i, (actual, expected)) in meta_doc_lines.iter().zip(expected_lines.iter()).enumerate()
-        {
-            assert_eq!(actual, *expected, "doc line {} mismatch", i);
         }
     }
 }
@@ -147,7 +140,7 @@ name myapp
                 &c.name,
                 "myapp",
                 "myapp",
-                Some("The application name"),
+                Some(&["The application name"]),
                 None,
             );
 
@@ -607,14 +600,16 @@ fn test_multiline_doc_comment() {
 name myapp
 "#,
         |t, c: Config| {
-            t.assert_is(&c.name, "myapp", "myapp", None, None);
-            t.assert_doc_lines(
+            t.assert_is(
                 &c.name,
-                &[
+                "myapp",
+                "myapp",
+                Some(&[
                     "First line of documentation.",
                     "Second line of documentation.",
                     "Third line.",
-                ],
+                ]),
+                None,
             );
 
             // Roundtrip
