@@ -52,12 +52,26 @@ impl<'a> ParseTest<'a> {
         if let Some(doc) = doc {
             let meta_doc_lines = meta.doc.as_ref().unwrap();
             assert_eq!(meta_doc_lines.len(), 1);
-            let meta_doc = &meta_doc_lines[1];
+            let meta_doc = &meta_doc_lines[0];
             assert_eq!(meta_doc, doc, "doc mismatch");
         }
         if let Some(tag) = tag {
             let meta_tag = meta.tag.as_ref().unwrap();
             assert_eq!(meta_tag, tag, "tag mismatch");
+        }
+    }
+
+    #[track_caller]
+    fn assert_doc_lines<T>(&self, meta: &WithMeta<T>, expected_lines: &[&str]) {
+        let meta_doc_lines = meta.doc.as_ref().expect("expected doc to be present");
+        assert_eq!(
+            meta_doc_lines.len(),
+            expected_lines.len(),
+            "doc line count mismatch"
+        );
+        for (i, (actual, expected)) in meta_doc_lines.iter().zip(expected_lines.iter()).enumerate()
+        {
+            assert_eq!(actual, *expected, "doc line {} mismatch", i);
         }
     }
 }
@@ -80,10 +94,11 @@ impl<T: std::hash::Hash> std::hash::Hash for WithMeta<T> {
 ///
 /// - Always use raw string literals (`r#"..."#`) for source input
 /// - Always use actual newlines, never `\n` escapes
-/// - Use `ParseTest::new(source, |t, parsed| { ... })` to parse and test
-/// - Use `t.assert_is(&field, expected_value, "span_text")` to check both value and span
-/// - For strings, `expected_value` can be `&str` (converts via `Into`)
+/// - Use `ParseTest::parse(source, |t, parsed| { ... })` to parse and test
+/// - Use `t.assert_is(&field, value, "span", doc, tag)` to check value, span, doc, and tag
+/// - For strings, `value` can be `&str` (converts via `Into`)
 /// - For integers, suffix literals to match the type (e.g., `8080u16`)
+/// - Pass `None` for doc/tag when not testing those, or `Some("...")` to assert
 #[test]
 fn test_spanned_doc_as_struct_field() {
     #[derive(Facet, Debug)]
@@ -105,7 +120,7 @@ port 8080
 }
 
 #[test]
-fn test_spanned_doc_as_struct_field_with_docs() {
+fn test_doc_comment() {
     #[derive(Facet, Debug)]
     struct Config {
         name: WithMeta<String>,
@@ -117,8 +132,13 @@ fn test_spanned_doc_as_struct_field_with_docs() {
 name myapp
 "#,
         |t, c: Config| {
-            t.assert_is(&c.name, "myapp", "myapp");
-            assert!(c.name.doc.is_some());
+            t.assert_is(
+                &c.name,
+                "myapp",
+                "myapp",
+                Some("The application name"),
+                None,
+            );
         },
     );
 }
@@ -140,8 +160,8 @@ baz qux
 "#,
         |t, c: Config| {
             assert_eq!(c.items.len(), 2);
-            t.assert_is(c.items.get("foo").unwrap(), "bar", "bar");
-            t.assert_is(c.items.get("baz").unwrap(), "qux", "qux");
+            t.assert_is(c.items.get("foo").unwrap(), "bar", "bar", None, None);
+            t.assert_is(c.items.get("baz").unwrap(), "qux", "qux", None, None);
         },
     );
 }
@@ -164,8 +184,8 @@ baz qux
         |t, c: Config| {
             assert_eq!(c.items.len(), 2);
             let keys: Vec<_> = c.items.keys().collect();
-            t.assert_is(keys[0], "foo", "foo");
-            t.assert_is(keys[1], "baz", "baz");
+            t.assert_is(keys[0], "foo", "foo", None, None);
+            t.assert_is(keys[1], "baz", "baz", None, None);
         },
     );
 }
@@ -188,11 +208,108 @@ baz qux
         |t, c: Config| {
             assert_eq!(c.items.len(), 2);
             let (key, val) = c.items.get_index(0).unwrap();
-            t.assert_is(key, "foo", "foo");
-            t.assert_is(val, "bar", "bar");
+            t.assert_is(key, "foo", "foo", None, None);
+            t.assert_is(val, "bar", "bar", None, None);
             let (key, val) = c.items.get_index(1).unwrap();
-            t.assert_is(key, "baz", "baz");
-            t.assert_is(val, "qux", "qux");
+            t.assert_is(key, "baz", "baz", None, None);
+            t.assert_is(val, "qux", "qux", None, None);
+        },
+    );
+}
+
+#[test]
+fn test_tag_on_value() {
+    #[derive(Facet, Debug)]
+    struct Config {
+        value: WithMeta<String>,
+    }
+
+    ParseTest::parse(
+        r#"
+value @tag"hello"
+"#,
+        |t, c: Config| {
+            t.assert_is(&c.value, "hello", r#"@tag"hello""#, None, Some("tag"));
+        },
+    );
+}
+
+#[test]
+fn test_tag_unit() {
+    #[derive(Facet, Debug)]
+    struct Config {
+        status: WithMeta<()>,
+    }
+
+    ParseTest::parse(
+        r#"
+status @ok
+"#,
+        |t, c: Config| {
+            t.assert_is(&c.status, (), "@ok", None, Some("ok"));
+        },
+    );
+}
+
+#[test]
+fn test_tag_bare_unit() {
+    #[derive(Facet, Debug)]
+    struct Config {
+        status: WithMeta<()>,
+    }
+
+    ParseTest::parse(
+        r#"
+status @
+"#,
+        |t, c: Config| {
+            t.assert_is(&c.status, (), "@", None, None);
+        },
+    );
+}
+
+#[test]
+fn test_unit_key_in_map() {
+    use std::collections::HashMap;
+
+    #[derive(Facet, Debug)]
+    struct Config {
+        items: HashMap<Option<String>, String>,
+    }
+
+    ParseTest::parse(
+        r#"
+items {
+    @ value
+}
+"#,
+        |_t, c: Config| {
+            assert_eq!(c.items.len(), 1);
+            assert_eq!(c.items.get(&None), Some(&"value".to_string()));
+        },
+    );
+}
+
+#[test]
+fn test_tag_in_map_key_and_value() {
+    use indexmap::IndexMap;
+
+    #[derive(Facet, Debug)]
+    struct Config {
+        items: IndexMap<WithMeta<String>, WithMeta<String>>,
+    }
+
+    ParseTest::parse(
+        r#"
+items {
+    @key"foo" @val"bar"
+}
+"#,
+        |t, c: Config| {
+            assert_eq!(c.items.len(), 1);
+            let (key, val) = c.items.get_index(0).unwrap();
+            t.assert_is(key, "foo", r#"@key"foo""#, None, Some("key"));
+            t.assert_is(val, "bar", r#"@val"bar""#, None, Some("val"));
         },
     );
 }
@@ -210,9 +327,9 @@ items (alpha beta gamma)
 "#,
         |t, c: Config| {
             assert_eq!(c.items.len(), 3);
-            t.assert_is(&c.items[0], "alpha", "alpha");
-            t.assert_is(&c.items[1], "beta", "beta");
-            t.assert_is(&c.items[2], "gamma", "gamma");
+            t.assert_is(&c.items[0], "alpha", "alpha", None, None);
+            t.assert_is(&c.items[1], "beta", "beta", None, None);
+            t.assert_is(&c.items[2], "gamma", "gamma", None, None);
         },
     );
 }
@@ -234,7 +351,7 @@ fn test_spanned_doc_in_nested_struct() {
 inner { value 42 }
 "#,
         |t, c: Outer| {
-            t.assert_is(&c.inner.value, 42, "42");
+            t.assert_is(&c.inner.value, 42, "42", None, None);
         },
     );
 }
@@ -251,7 +368,7 @@ fn test_spanned_doc_with_option_present() {
 name hello
 "#,
         |t, c: Config| {
-            t.assert_is(c.name.as_ref().unwrap(), "hello", "hello");
+            t.assert_is(c.name.as_ref().unwrap(), "hello", "hello", None, None);
         },
     );
 }
@@ -291,9 +408,9 @@ b 999
 c 127
 "#,
         |t, c: Numbers| {
-            t.assert_is(&c.a, -42, "-42");
-            t.assert_is(&c.b, 999u64, "999");
-            t.assert_is(&c.c, 127i8, "127");
+            t.assert_is(&c.a, -42, "-42", None, None);
+            t.assert_is(&c.b, 999u64, "999", None, None);
+            t.assert_is(&c.c, 127i8, "127", None, None);
         },
     );
 }
@@ -312,8 +429,8 @@ enabled true
 debug false
 "#,
         |t, c: Flags| {
-            t.assert_is(&c.enabled, true, "true");
-            t.assert_is(&c.debug, false, "false");
+            t.assert_is(&c.enabled, true, "true", None, None);
+            t.assert_is(&c.debug, false, "false", None, None);
         },
     );
 }
@@ -335,11 +452,177 @@ fn test_spanned_doc_in_flattened_map_inline() {
         |t, c: Config| {
             assert_eq!(c.items.len(), 2);
             let (key, val) = c.items.get_index(0).unwrap();
-            t.assert_is(key, "foo", "foo");
-            t.assert_is(val, "bar", "bar");
+            t.assert_is(key, "foo", "foo", None, None);
+            t.assert_is(val, "bar", "bar", None, None);
             let (key, val) = c.items.get_index(1).unwrap();
-            t.assert_is(key, "baz", "baz");
-            t.assert_is(val, "qux", "qux");
+            t.assert_is(key, "baz", "baz", None, None);
+            t.assert_is(val, "qux", "qux", None, None);
+        },
+    );
+}
+
+// =============================================================================
+// Edge case tests
+// =============================================================================
+
+/// Test that multi-line doc comments are captured as multiple lines.
+#[test]
+fn test_multiline_doc_comment() {
+    #[derive(Facet, Debug)]
+    struct Config {
+        name: WithMeta<String>,
+    }
+
+    ParseTest::parse(
+        r#"
+/// First line of documentation.
+/// Second line of documentation.
+/// Third line.
+name myapp
+"#,
+        |t, c: Config| {
+            t.assert_is(&c.name, "myapp", "myapp", None, None);
+            t.assert_doc_lines(
+                &c.name,
+                &[
+                    "First line of documentation.",
+                    "Second line of documentation.",
+                    "Third line.",
+                ],
+            );
+        },
+    );
+}
+
+/// Test that tags are captured on sequence elements.
+#[test]
+fn test_tag_on_sequence_element() {
+    #[derive(Facet, Debug)]
+    struct Config {
+        items: Vec<WithMeta<()>>,
+    }
+
+    ParseTest::parse(
+        r#"
+items (@ok @err @ok)
+"#,
+        |t, c: Config| {
+            assert_eq!(c.items.len(), 3);
+            t.assert_is(&c.items[0], (), "@ok", None, Some("ok"));
+            t.assert_is(&c.items[1], (), "@err", None, Some("err"));
+            t.assert_is(&c.items[2], (), "@ok", None, Some("ok"));
+        },
+    );
+}
+
+/// Test that a tag on a nested struct value is captured.
+#[test]
+fn test_tag_on_nested_struct() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Inner {
+        field: String,
+    }
+
+    #[derive(Facet, Debug)]
+    struct Config {
+        inner: WithMeta<Inner>,
+    }
+
+    ParseTest::parse(
+        r#"
+inner @tagged{field value}
+"#,
+        |t, c: Config| {
+            assert_eq!(c.inner.value.field, "value");
+            t.assert_is(
+                &c.inner,
+                Inner {
+                    field: "value".into(),
+                },
+                "@tagged{field value}",
+                None,
+                Some("tagged"),
+            );
+        },
+    );
+}
+
+/// Test mixed tagged and untagged map entries.
+#[test]
+fn test_mixed_tagged_untagged_map_entries() {
+    use indexmap::IndexMap;
+
+    #[derive(Facet, Debug)]
+    struct Config {
+        items: IndexMap<WithMeta<String>, String>,
+    }
+
+    ParseTest::parse(
+        r#"
+items {
+    foo bar
+    @key"baz" qux
+}
+"#,
+        |t, c: Config| {
+            assert_eq!(c.items.len(), 2);
+            let keys: Vec<_> = c.items.keys().collect();
+            t.assert_is(keys[0], "foo", "foo", None, None);
+            t.assert_is(keys[1], "baz", r#"@key"baz""#, None, Some("key"));
+        },
+    );
+}
+
+/// Test that span for quoted strings includes the quotes.
+#[test]
+fn test_span_quoted_string_with_escapes() {
+    #[derive(Facet, Debug)]
+    struct Config {
+        name: WithMeta<String>,
+    }
+
+    ParseTest::parse(
+        r#"
+name "hello\nworld"
+"#,
+        |t, c: Config| {
+            // The value is the unescaped string
+            assert_eq!(c.name.value, "hello\nworld");
+            // The span should cover the quoted string in the source (including quotes)
+            t.assert_is(
+                &c.name,
+                "hello\nworld".to_string(),
+                r#""hello\nworld""#,
+                None,
+                None,
+            );
+        },
+    );
+}
+
+/// Test tag on Option value - @some and @none style.
+#[test]
+fn test_tag_on_option_value() {
+    #[derive(Facet, Debug)]
+    struct Config {
+        present: WithMeta<Option<String>>,
+        absent: WithMeta<Option<String>>,
+    }
+
+    ParseTest::parse(
+        r#"
+present @some"hello"
+absent @none
+"#,
+        |t, c: Config| {
+            t.assert_is(
+                &c.present,
+                Some("hello".to_string()),
+                r#"@some"hello""#,
+                None,
+                Some("some"),
+            );
+            t.assert_is(&c.absent, None, "@none", None, Some("none"));
         },
     );
 }

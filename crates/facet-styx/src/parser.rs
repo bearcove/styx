@@ -246,11 +246,13 @@ impl<'de> StyxParser<'de> {
                     }
                     // Unit key: `@` alone
                     (None, None) => FieldKey::unit_with_doc(FieldLocationHint::KeyValue, doc),
-                    // Tagged key with payload - shouldn't happen for keys
-                    (Some(tag_name), Some(_payload)) => {
-                        // Treat as tagged key, ignore payload
-                        FieldKey::tagged_with_doc(tag_name, FieldLocationHint::KeyValue, doc)
-                    }
+                    // Tagged key with payload: `@tag"payload"`
+                    (Some(tag_name), Some(payload)) => FieldKey::tagged_with_name_and_doc(
+                        tag_name,
+                        payload,
+                        FieldLocationHint::KeyValue,
+                        doc,
+                    ),
                 };
 
                 trace!(?field_key, "convert_event: FieldKey");
