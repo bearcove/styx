@@ -403,6 +403,32 @@ impl FormatSerializer for StyxSerializer {
         Ok(false)
     }
 
+    fn serialize_metadata_container(
+        &mut self,
+        container: &facet_reflect::PeekStruct<'_, '_>,
+    ) -> Result<bool, Self::Error> {
+        trace!("serialize_metadata_container");
+
+        // Extract tag from the metadata container
+        for (f, field_value) in container.fields() {
+            if f.metadata_kind() == Some("tag") {
+                // Extract tag value
+                if let Ok(opt) = field_value.into_option()
+                    && let Some(inner) = opt.value()
+                    && let Some(s) = inner.as_str()
+                {
+                    // Emit the tag before the value
+                    self.write_variant_tag(s)?;
+                }
+                break;
+            }
+        }
+
+        // Return false to let the caller serialize the value field
+        // (the fallback behavior in serialize_impl)
+        Ok(false)
+    }
+
     fn field_metadata_with_value(
         &mut self,
         field_item: &facet_reflect::FieldItem,

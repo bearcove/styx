@@ -115,6 +115,15 @@ port 8080
         |t, c: Config| {
             t.assert_is(&c.name, "myapp", "myapp", None, None);
             t.assert_is(&c.port, 8080u16, "8080", None, None);
+
+            // Roundtrip: serialize and check output (spans are not preserved)
+            let serialized = to_string(&c).unwrap();
+            assert_eq!(
+                serialized.trim(),
+                r#"name myapp
+
+port 8080"#
+            );
         },
     );
 }
@@ -138,6 +147,14 @@ name myapp
                 "myapp",
                 Some("The application name"),
                 None,
+            );
+
+            // Roundtrip: doc comment should be preserved
+            let serialized = to_string(&c).unwrap();
+            assert_eq!(
+                serialized.trim(),
+                r#"/// The application name
+name myapp"#
             );
         },
     );
@@ -230,6 +247,10 @@ value @tag"hello"
 "#,
         |t, c: Config| {
             t.assert_is(&c.value, "hello", r#"@tag"hello""#, None, Some("tag"));
+
+            // Roundtrip: tag should be preserved
+            let serialized = to_string(&c).unwrap();
+            assert_eq!(serialized.trim(), r#"value @tag"hello""#);
         },
     );
 }
