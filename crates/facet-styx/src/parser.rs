@@ -417,12 +417,13 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
         // Get events from inner parser until we have one to return
         loop {
             let event = self.inner.next_event();
-            trace!(?event, "next_event: got inner event");
 
             match event {
                 Some(inner_event) => {
-                    if let Some(converted) = self.convert_event(inner_event)? {
-                        return Ok(Some(converted));
+                    trace!(?inner_event);
+                    if let Some(converted_event) = self.convert_event(inner_event)? {
+                        trace!(?converted_event);
+                        return Ok(Some(converted_event));
                     }
                     // Event was skipped, continue to next
                 }

@@ -67,3 +67,4 @@ facet-pretty = { path = "../facet/facet-pretty" }
 facet-value = { path = "../facet/facet-value" }
 facet-dessert = { path = "../facet/facet-dessert" }
 facet-solver = { path = "../facet/facet-solver" }
+facet-json = { path = "../facet/facet-json" }

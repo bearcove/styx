@@ -10,6 +10,7 @@ packages {
         env {
             RUST_BACKTRACE 1
             FACET_LOG trace
+            FACET_LOG_VERBOSE 1
         }
     }
     styx-parse {
@@ -17,6 +18,7 @@ packages {
         env {
             RUST_BACKTRACE 1
             FACET_LOG trace
+            FACET_LOG_VERBOSE 1
         }
     }
     styx-tree {
@@ -24,6 +26,7 @@ packages {
         env {
             RUST_BACKTRACE 1
             FACET_LOG trace
+            FACET_LOG_VERBOSE 1
         }
     }
 }

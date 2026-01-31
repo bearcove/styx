@@ -77,10 +77,7 @@ fn test_spanned_doc_as_struct_field_with_docs() {
 
     assert_eq!(result.name.value, "myapp");
     assert!(result.name.span.is_some());
-
-    // TODO: doc comments should be captured in metadata containers
-    // but this isn't implemented yet for SpannedDoc
-    // assert!(result.name.doc.is_some());
+    assert!(result.name.doc.is_some());
 }
 
 /// Test SpannedDoc<T> as a map value.
@@ -132,10 +129,7 @@ fn test_spanned_doc_as_map_key() {
     let keys: Vec<_> = result.items.keys().collect();
     assert_eq!(keys[0].value, "foo");
     assert_eq!(keys[1].value, "baz");
-
-    // TODO: spans should be populated for map keys but currently aren't
-    // See: https://github.com/bearcove/styx/issues/45
-    // assert!(keys[0].span.is_some());
+    assert!(keys[0].span.is_some());
 }
 
 /// Test SpannedDoc<T> as both map key and value.
@@ -160,10 +154,7 @@ fn test_spanned_doc_as_map_key_and_value() {
 
     // Values get spans
     assert!(val.span.is_some());
-
-    // TODO: keys should get spans too but currently don't
-    // See: https://github.com/bearcove/styx/issues/45
-    // assert!(key.span.is_some());
+    assert!(key.span.is_some());
 }
 
 /// Test SpannedDoc<T> in an array/sequence.
