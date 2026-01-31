@@ -117,12 +117,14 @@ port 8080
             t.assert_is(&c.port, 8080u16, "8080", None, None);
 
             // Roundtrip: serialize and check output (spans are not preserved)
-            let serialized = to_string(&c).unwrap();
+            let s = to_string(&c).unwrap();
             assert_eq!(
-                serialized.trim(),
-                r#"name myapp
+                s.trim(),
+                r#"
+name myapp
 
 port 8080"#
+                    .trim()
             );
         },
     );
@@ -153,8 +155,10 @@ name myapp
             let serialized = to_string(&c).unwrap();
             assert_eq!(
                 serialized.trim(),
-                r#"/// The application name
+                r#"
+/// The application name
 name myapp"#
+                    .trim()
             );
         },
     );
@@ -179,6 +183,17 @@ baz qux
             assert_eq!(c.items.len(), 2);
             t.assert_is(c.items.get("foo").unwrap(), "bar", "bar", None, None);
             t.assert_is(c.items.get("baz").unwrap(), "qux", "qux", None, None);
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(
+                s.trim(),
+                r#"
+foo bar
+
+baz qux"#
+                    .trim()
+            );
         },
     );
 }
@@ -203,6 +218,17 @@ baz qux
             let keys: Vec<_> = c.items.keys().collect();
             t.assert_is(keys[0], "foo", "foo", None, None);
             t.assert_is(keys[1], "baz", "baz", None, None);
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(
+                s.trim(),
+                r#"
+foo bar
+
+baz qux"#
+                    .trim()
+            );
         },
     );
 }
@@ -230,6 +256,17 @@ baz qux
             let (key, val) = c.items.get_index(1).unwrap();
             t.assert_is(key, "baz", "baz", None, None);
             t.assert_is(val, "qux", "qux", None, None);
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(
+                s.trim(),
+                r#"
+foo bar
+
+baz qux"#
+                    .trim()
+            );
         },
     );
 }
@@ -268,6 +305,10 @@ status @ok
 "#,
         |t, c: Config| {
             t.assert_is(&c.status, (), "@ok", None, Some("ok"));
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(s.trim(), "status @ok");
         },
     );
 }
@@ -285,6 +326,10 @@ status @
 "#,
         |t, c: Config| {
             t.assert_is(&c.status, (), "@", None, None);
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(s.trim(), "status @");
         },
     );
 }
@@ -307,6 +352,10 @@ items {
         |_t, c: Config| {
             assert_eq!(c.items.len(), 1);
             assert_eq!(c.items.get(&None), Some(&"value".to_string()));
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(s.trim(), "items {@ value}");
         },
     );
 }
@@ -331,6 +380,10 @@ items {
             let (key, val) = c.items.get_index(0).unwrap();
             t.assert_is(key, "foo", r#"@key"foo""#, None, Some("key"));
             t.assert_is(val, "bar", r#"@val"bar""#, None, Some("val"));
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(s.trim(), r#"items {@key"foo" @val"bar"}"#);
         },
     );
 }
@@ -351,6 +404,10 @@ items (alpha beta gamma)
             t.assert_is(&c.items[0], "alpha", "alpha", None, None);
             t.assert_is(&c.items[1], "beta", "beta", None, None);
             t.assert_is(&c.items[2], "gamma", "gamma", None, None);
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(s.trim(), "items (alpha beta gamma)");
         },
     );
 }
@@ -373,6 +430,10 @@ inner { value 42 }
 "#,
         |t, c: Outer| {
             t.assert_is(&c.inner.value, 42, "42", None, None);
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(s.trim(), "inner {value 42}");
         },
     );
 }
@@ -390,6 +451,10 @@ name hello
 "#,
         |t, c: Config| {
             t.assert_is(c.name.as_ref().unwrap(), "hello", "hello", None, None);
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(s.trim(), "name hello");
         },
     );
 }
@@ -398,6 +463,7 @@ name hello
 fn test_spanned_doc_with_option_absent() {
     #[derive(Facet, Debug)]
     struct Config {
+        #[facet(skip_serializing_if = Option::is_none)]
         name: Option<WithMeta<String>>,
         other: String,
     }
@@ -409,6 +475,10 @@ other world
         |_t, c: Config| {
             assert!(c.name.is_none());
             assert_eq!(c.other, "world");
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(s.trim(), "other world");
         },
     );
 }
@@ -432,6 +502,19 @@ c 127
             t.assert_is(&c.a, -42, "-42", None, None);
             t.assert_is(&c.b, 999u64, "999", None, None);
             t.assert_is(&c.c, 127i8, "127", None, None);
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(
+                s.trim(),
+                r#"
+a -42
+
+b 999
+
+c 127"#
+                    .trim()
+            );
         },
     );
 }
@@ -452,6 +535,17 @@ debug false
         |t, c: Flags| {
             t.assert_is(&c.enabled, true, "true", None, None);
             t.assert_is(&c.debug, false, "false", None, None);
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(
+                s.trim(),
+                r#"
+enabled true
+
+debug false"#
+                    .trim()
+            );
         },
     );
 }
@@ -478,6 +572,17 @@ fn test_spanned_doc_in_flattened_map_inline() {
             let (key, val) = c.items.get_index(1).unwrap();
             t.assert_is(key, "baz", "baz", None, None);
             t.assert_is(val, "qux", "qux", None, None);
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(
+                s.trim(),
+                r#"
+foo bar
+
+baz qux"#
+                    .trim()
+            );
         },
     );
 }
@@ -511,6 +616,18 @@ name myapp
                     "Third line.",
                 ],
             );
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(
+                s.trim(),
+                r#"
+/// First line of documentation.
+/// Second line of documentation.
+/// Third line.
+name myapp"#
+                    .trim()
+            );
         },
     );
 }
@@ -532,6 +649,10 @@ items (@ok @err @ok)
             t.assert_is(&c.items[0], (), "@ok", None, Some("ok"));
             t.assert_is(&c.items[1], (), "@err", None, Some("err"));
             t.assert_is(&c.items[2], (), "@ok", None, Some("ok"));
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(s.trim(), "items (@ok @err @ok)");
         },
     );
 }
@@ -564,6 +685,10 @@ inner @tagged{field value}
                 None,
                 Some("tagged"),
             );
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(s.trim(), r#"inner @tagged{field "value"}"#);
         },
     );
 }
@@ -590,6 +715,10 @@ items {
             let keys: Vec<_> = c.items.keys().collect();
             t.assert_is(keys[0], "foo", "foo", None, None);
             t.assert_is(keys[1], "baz", r#"@key"baz""#, None, Some("key"));
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(s.trim(), r#"items {foo bar, @key"baz" qux}"#);
         },
     );
 }
@@ -617,6 +746,10 @@ name "hello\nworld"
                 None,
                 None,
             );
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(s.trim(), r#"name "hello\nworld""#);
         },
     );
 }
@@ -644,6 +777,17 @@ absent @none
                 Some("some"),
             );
             t.assert_is(&c.absent, None, "@none", None, Some("none"));
+
+            // Roundtrip
+            let s = to_string(&c).unwrap();
+            assert_eq!(
+                s.trim(),
+                r#"
+present @some"hello"
+
+absent @none"#
+                    .trim()
+            );
         },
     );
 }
