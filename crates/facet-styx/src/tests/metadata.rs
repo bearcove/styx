@@ -3,13 +3,37 @@ use facet::Facet;
 use facet_reflect::Span;
 use facet_testhelpers::test;
 
+struct ParseTest<'a> {
+    source: &'a str,
+}
+
+impl<'a> ParseTest<'a> {
+    fn new<T: Facet<'static>>(source: &'a str, f: impl FnOnce(&Self, T)) {
+        let test = Self { source };
+        let parsed: T = from_str(source).unwrap();
+        f(&test, parsed);
+    }
+
+    #[track_caller]
+    fn assert_is<T, E>(&self, meta: &WithMeta<T>, expected: E, span_text: &str)
+    where
+        T: PartialEq + std::fmt::Debug,
+        E: Into<T>,
+    {
+        assert_eq!(meta.value, expected.into(), "value mismatch");
+        let span = meta.span.expect("expected span to be present");
+        let actual = &self.source[span.offset as usize..(span.offset + span.len) as usize];
+        assert_eq!(actual, span_text, "span mismatch");
+    }
+}
+
 /// A metadata container that captures both span and doc metadata.
 ///
 /// This is useful for validation errors that need to point back to source locations,
 /// while also preserving doc comments.
 #[derive(Debug, Clone, Facet)]
 #[facet(metadata_container)]
-pub struct SpannedDoc<T> {
+pub struct WithMeta<T> {
     pub value: T,
     #[facet(metadata = "span")]
     pub span: Option<Span>,
@@ -17,70 +41,67 @@ pub struct SpannedDoc<T> {
     pub doc: Option<Vec<String>>,
 }
 
-impl<T: PartialEq> PartialEq for SpannedDoc<T> {
+impl<T: PartialEq> PartialEq for WithMeta<T> {
     fn eq(&self, other: &Self) -> bool {
         self.value == other.value
     }
 }
 
-impl<T: Eq> Eq for SpannedDoc<T> {}
+impl<T: Eq> Eq for WithMeta<T> {}
 
-impl<T: std::hash::Hash> std::hash::Hash for SpannedDoc<T> {
+impl<T: std::hash::Hash> std::hash::Hash for WithMeta<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.value.hash(state);
     }
 }
 
-// =========================================================================
-// SpannedDoc<T> tests - metadata container in various positions
-// =========================================================================
-
-/// Test SpannedDoc<T> as a struct field.
+/// Reference test demonstrating the `ParseTest` harness conventions:
+///
+/// - Always use raw string literals (`r#"..."#`) for source input
+/// - Always use actual newlines, never `\n` escapes
+/// - Use `ParseTest::new(source, |t, parsed| { ... })` to parse and test
+/// - Use `t.assert_is(&field, expected_value, "span_text")` to check both value and span
+/// - For strings, `expected_value` can be `&str` (converts via `Into`)
+/// - For integers, suffix literals to match the type (e.g., `8080u16`)
 #[test]
 fn test_spanned_doc_as_struct_field() {
     #[derive(Facet, Debug)]
     struct Config {
-        name: SpannedDoc<String>,
-        port: SpannedDoc<u16>,
+        name: WithMeta<String>,
+        port: WithMeta<u16>,
     }
 
-    let source = "name myapp\nport 8080";
-    let result: Config = from_str(source).unwrap();
-
-    assert_eq!(result.name.value, "myapp");
-    assert!(result.name.span.is_some());
-    let name_span = result.name.span.unwrap();
-    assert_eq!(
-        &source[name_span.offset as usize..(name_span.offset + name_span.len) as usize],
-        "myapp"
-    );
-
-    assert_eq!(result.port.value, 8080);
-    assert!(result.port.span.is_some());
-    let port_span = result.port.span.unwrap();
-    assert_eq!(
-        &source[port_span.offset as usize..(port_span.offset + port_span.len) as usize],
-        "8080"
+    ParseTest::new(
+        r#"
+name myapp
+port 8080
+"#,
+        |t, c: Config| {
+            t.assert_is(&c.name, "myapp", "myapp");
+            t.assert_is(&c.port, 8080u16, "8080");
+        },
     );
 }
 
-/// Test SpannedDoc<T> as a struct field with doc comments.
 #[test]
 fn test_spanned_doc_as_struct_field_with_docs() {
     #[derive(Facet, Debug)]
     struct Config {
-        name: SpannedDoc<String>,
+        name: WithMeta<String>,
     }
 
-    let source = "/// The application name\nname myapp";
-    let result: Config = from_str(source).unwrap();
-
-    assert_eq!(result.name.value, "myapp");
-    assert!(result.name.span.is_some());
-    assert!(result.name.doc.is_some());
+    ParseTest::new(
+        r#"
+/// The application name
+name myapp
+"#,
+        |t, c: Config| {
+            t.assert_is(&c.name, "myapp", "myapp");
+            assert!(c.name.doc.is_some());
+        },
+    );
 }
 
-/// Test SpannedDoc<T> as a map value.
 #[test]
 fn test_spanned_doc_as_map_value() {
     use indexmap::IndexMap;
@@ -88,29 +109,22 @@ fn test_spanned_doc_as_map_value() {
     #[derive(Facet, Debug)]
     struct Config {
         #[facet(flatten)]
-        items: IndexMap<String, SpannedDoc<String>>,
+        items: IndexMap<String, WithMeta<String>>,
     }
 
-    let source = "foo bar\nbaz qux";
-    let result: Config = from_str(source).unwrap();
-
-    assert_eq!(result.items.len(), 2);
-
-    let foo_val = result.items.get("foo").unwrap();
-    assert_eq!(foo_val.value, "bar");
-    assert!(foo_val.span.is_some());
-    let foo_span = foo_val.span.unwrap();
-    assert_eq!(
-        &source[foo_span.offset as usize..(foo_span.offset + foo_span.len) as usize],
-        "bar"
+    ParseTest::new(
+        r#"
+foo bar
+baz qux
+"#,
+        |t, c: Config| {
+            assert_eq!(c.items.len(), 2);
+            t.assert_is(c.items.get("foo").unwrap(), "bar", "bar");
+            t.assert_is(c.items.get("baz").unwrap(), "qux", "qux");
+        },
     );
-
-    let baz_val = result.items.get("baz").unwrap();
-    assert_eq!(baz_val.value, "qux");
-    assert!(baz_val.span.is_some());
 }
 
-/// Test SpannedDoc<T> as a map key.
 #[test]
 fn test_spanned_doc_as_map_key() {
     use indexmap::IndexMap;
@@ -118,21 +132,23 @@ fn test_spanned_doc_as_map_key() {
     #[derive(Facet, Debug)]
     struct Config {
         #[facet(flatten)]
-        items: IndexMap<SpannedDoc<String>, String>,
+        items: IndexMap<WithMeta<String>, String>,
     }
 
-    let source = "foo bar\nbaz qux";
-    let result: Config = from_str(source).unwrap();
-
-    assert_eq!(result.items.len(), 2);
-
-    let keys: Vec<_> = result.items.keys().collect();
-    assert_eq!(keys[0].value, "foo");
-    assert_eq!(keys[1].value, "baz");
-    assert!(keys[0].span.is_some());
+    ParseTest::new(
+        r#"
+foo bar
+baz qux
+"#,
+        |t, c: Config| {
+            assert_eq!(c.items.len(), 2);
+            let keys: Vec<_> = c.items.keys().collect();
+            t.assert_is(keys[0], "foo", "foo");
+            t.assert_is(keys[1], "baz", "baz");
+        },
+    );
 }
 
-/// Test SpannedDoc<T> as both map key and value.
 #[test]
 fn test_spanned_doc_as_map_key_and_value() {
     use indexmap::IndexMap;
@@ -140,57 +156,51 @@ fn test_spanned_doc_as_map_key_and_value() {
     #[derive(Facet, Debug)]
     struct Config {
         #[facet(flatten)]
-        items: IndexMap<SpannedDoc<String>, SpannedDoc<String>>,
+        items: IndexMap<WithMeta<String>, WithMeta<String>>,
     }
 
-    let source = "foo bar\nbaz qux";
-    let result: Config = from_str(source).unwrap();
-
-    assert_eq!(result.items.len(), 2);
-
-    let (key, val) = result.items.get_index(0).unwrap();
-    assert_eq!(key.value, "foo");
-    assert_eq!(val.value, "bar");
-
-    // Values get spans
-    assert!(val.span.is_some());
-    assert!(key.span.is_some());
+    ParseTest::new(
+        r#"
+foo bar
+baz qux
+"#,
+        |t, c: Config| {
+            assert_eq!(c.items.len(), 2);
+            let (key, val) = c.items.get_index(0).unwrap();
+            t.assert_is(key, "foo", "foo");
+            t.assert_is(val, "bar", "bar");
+            let (key, val) = c.items.get_index(1).unwrap();
+            t.assert_is(key, "baz", "baz");
+            t.assert_is(val, "qux", "qux");
+        },
+    );
 }
 
-/// Test SpannedDoc<T> in an array/sequence.
 #[test]
 fn test_spanned_doc_in_array() {
     #[derive(Facet, Debug)]
     struct Config {
-        items: Vec<SpannedDoc<String>>,
+        items: Vec<WithMeta<String>>,
     }
 
-    let source = "items (alpha beta gamma)";
-    let result: Config = from_str(source).unwrap();
-
-    assert_eq!(result.items.len(), 3);
-
-    assert_eq!(result.items[0].value, "alpha");
-    assert!(result.items[0].span.is_some());
-    let alpha_span = result.items[0].span.unwrap();
-    assert_eq!(
-        &source[alpha_span.offset as usize..(alpha_span.offset + alpha_span.len) as usize],
-        "alpha"
+    ParseTest::new(
+        r#"
+items (alpha beta gamma)
+"#,
+        |t, c: Config| {
+            assert_eq!(c.items.len(), 3);
+            t.assert_is(&c.items[0], "alpha", "alpha");
+            t.assert_is(&c.items[1], "beta", "beta");
+            t.assert_is(&c.items[2], "gamma", "gamma");
+        },
     );
-
-    assert_eq!(result.items[1].value, "beta");
-    assert!(result.items[1].span.is_some());
-
-    assert_eq!(result.items[2].value, "gamma");
-    assert!(result.items[2].span.is_some());
 }
 
-/// Test SpannedDoc<T> in a nested struct.
 #[test]
 fn test_spanned_doc_in_nested_struct() {
     #[derive(Facet, Debug)]
     struct Inner {
-        value: SpannedDoc<i32>,
+        value: WithMeta<i32>,
     }
 
     #[derive(Facet, Debug)]
@@ -198,92 +208,95 @@ fn test_spanned_doc_in_nested_struct() {
         inner: Inner,
     }
 
-    let source = "inner { value 42 }";
-    let result: Outer = from_str(source).unwrap();
-
-    assert_eq!(result.inner.value.value, 42);
-    assert!(result.inner.value.span.is_some());
-    let span = result.inner.value.span.unwrap();
-    assert_eq!(
-        &source[span.offset as usize..(span.offset + span.len) as usize],
-        "42"
+    ParseTest::new(
+        r#"
+inner { value 42 }
+"#,
+        |t, c: Outer| {
+            t.assert_is(&c.inner.value, 42, "42");
+        },
     );
 }
 
-/// Test SpannedDoc<T> with Option.
 #[test]
 fn test_spanned_doc_with_option_present() {
     #[derive(Facet, Debug)]
     struct Config {
-        name: Option<SpannedDoc<String>>,
+        name: Option<WithMeta<String>>,
     }
 
-    let source = "name hello";
-    let result: Config = from_str(source).unwrap();
-
-    assert!(result.name.is_some());
-    let name = result.name.unwrap();
-    assert_eq!(name.value, "hello");
-    assert!(name.span.is_some());
+    ParseTest::new(
+        r#"
+name hello
+"#,
+        |t, c: Config| {
+            t.assert_is(c.name.as_ref().unwrap(), "hello", "hello");
+        },
+    );
 }
 
-/// Test SpannedDoc<T> with Option absent.
 #[test]
 fn test_spanned_doc_with_option_absent() {
     #[derive(Facet, Debug)]
     struct Config {
-        name: Option<SpannedDoc<String>>,
+        name: Option<WithMeta<String>>,
         other: String,
     }
 
-    let source = "other world";
-    let result: Config = from_str(source).unwrap();
-
-    assert!(result.name.is_none());
-    assert_eq!(result.other, "world");
+    ParseTest::new(
+        r#"
+other world
+"#,
+        |_t, c: Config| {
+            assert!(c.name.is_none());
+            assert_eq!(c.other, "world");
+        },
+    );
 }
 
-/// Test SpannedDoc<T> with integer values.
 #[test]
 fn test_spanned_doc_with_integers() {
     #[derive(Facet, Debug)]
     struct Numbers {
-        a: SpannedDoc<i32>,
-        b: SpannedDoc<u64>,
-        c: SpannedDoc<i8>,
+        a: WithMeta<i32>,
+        b: WithMeta<u64>,
+        c: WithMeta<i8>,
     }
 
-    let source = "a -42\nb 999\nc 127";
-    let result: Numbers = from_str(source).unwrap();
-
-    assert_eq!(result.a.value, -42);
-    assert_eq!(result.b.value, 999);
-    assert_eq!(result.c.value, 127);
-
-    assert!(result.a.span.is_some());
-    assert!(result.b.span.is_some());
-    assert!(result.c.span.is_some());
+    ParseTest::new(
+        r#"
+a -42
+b 999
+c 127
+"#,
+        |t, c: Numbers| {
+            t.assert_is(&c.a, -42, "-42");
+            t.assert_is(&c.b, 999u64, "999");
+            t.assert_is(&c.c, 127i8, "127");
+        },
+    );
 }
 
-/// Test SpannedDoc<T> with boolean values.
 #[test]
 fn test_spanned_doc_with_booleans() {
     #[derive(Facet, Debug)]
     struct Flags {
-        enabled: SpannedDoc<bool>,
-        debug: SpannedDoc<bool>,
+        enabled: WithMeta<bool>,
+        debug: WithMeta<bool>,
     }
 
-    let source = "enabled true\ndebug false";
-    let result: Flags = from_str(source).unwrap();
-
-    assert_eq!(result.enabled.value, true);
-    assert_eq!(result.debug.value, false);
-    assert!(result.enabled.span.is_some());
-    assert!(result.debug.span.is_some());
+    ParseTest::new(
+        r#"
+enabled true
+debug false
+"#,
+        |t, c: Flags| {
+            t.assert_is(&c.enabled, true, "true");
+            t.assert_is(&c.debug, false, "false");
+        },
+    );
 }
 
-/// Test SpannedDoc<T> in a flattened map with inline object syntax.
 #[test]
 fn test_spanned_doc_in_flattened_map_inline() {
     use indexmap::IndexMap;
@@ -291,15 +304,21 @@ fn test_spanned_doc_in_flattened_map_inline() {
     #[derive(Facet, Debug)]
     struct Config {
         #[facet(flatten)]
-        items: IndexMap<SpannedDoc<String>, SpannedDoc<String>>,
+        items: IndexMap<WithMeta<String>, WithMeta<String>>,
     }
 
-    let source = "{foo bar, baz qux}";
-    let result: Config = from_str(source).unwrap();
-
-    assert_eq!(result.items.len(), 2);
-
-    let keys: Vec<_> = result.items.keys().map(|k| k.value.as_str()).collect();
-    assert!(keys.contains(&"foo"));
-    assert!(keys.contains(&"baz"));
+    ParseTest::new(
+        r#"
+{foo bar, baz qux}
+"#,
+        |t, c: Config| {
+            assert_eq!(c.items.len(), 2);
+            let (key, val) = c.items.get_index(0).unwrap();
+            t.assert_is(key, "foo", "foo");
+            t.assert_is(val, "bar", "bar");
+            let (key, val) = c.items.get_index(1).unwrap();
+            t.assert_is(key, "baz", "baz");
+            t.assert_is(val, "qux", "qux");
+        },
+    );
 }
