@@ -36,14 +36,14 @@ serde_json = "1"
 
 # Internal crates
 styx-tokenizer = { path = "crates/styx-tokenizer", version = "1.0" }
-styx-parse = { path = "crates/styx-parse", version = "1.0" }
-styx-format = { path = "crates/styx-format", version = "1.0" }
-styx-tree = { path = "crates/styx-tree", version = "1.0" }
-styx-cst = { path = "crates/styx-cst", version = "1.0" }
-styx-lsp = { path = "crates/styx-lsp", version = "1.0" }
-styx-embed = { path = "crates/styx-embed", version = "1.0" }
+styx-parse = { path = "crates/styx-parse", version = "2.0" }
+styx-format = { path = "crates/styx-format", version = "2.0" }
+styx-tree = { path = "crates/styx-tree", version = "2.0" }
+styx-cst = { path = "crates/styx-cst", version = "2.0" }
+styx-lsp = { path = "crates/styx-lsp", version = "2.0" }
+styx-embed = { path = "crates/styx-embed", version = "2.0" }
 styx-gen-go = { path = "crates/styx-gen-go", version = "1.0" }
-facet-styx = { path = "crates/facet-styx", version = "1.0" }
+facet-styx = { path = "crates/facet-styx", version = "2.0" }
 styx-testhelpers = { path = "crates/styx-testhelpers", version = "1.0" }
 
 # Optimize WASM builds for size
