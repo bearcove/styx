@@ -433,7 +433,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -478,7 +478,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -689,7 +689,7 @@ dependencies = [
 
 [[package]]
 name = "facet-styx"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "ariadne",
  "facet",
@@ -1198,7 +1198,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1356,7 +1356,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1794,7 +1794,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1918,7 +1918,7 @@ dependencies = [
 
 [[package]]
 name = "serde_styx"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "serde",
  "styx-format",
@@ -2030,7 +2030,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "styx-cli"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "facet",
  "facet-styx",
@@ -2060,7 +2060,7 @@ dependencies = [
 
 [[package]]
 name = "styx-cst"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "rowan",
  "styx-testhelpers",
@@ -2069,7 +2069,7 @@ dependencies = [
 
 [[package]]
 name = "styx-embed"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "blake3",
  "goblin",
@@ -2080,7 +2080,7 @@ dependencies = [
 
 [[package]]
 name = "styx-embed-macros"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "blake3",
  "lz4_flex",
@@ -2091,7 +2091,7 @@ dependencies = [
 
 [[package]]
 name = "styx-ffi"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "cbindgen",
  "styx-tree",
@@ -2099,7 +2099,7 @@ dependencies = [
 
 [[package]]
 name = "styx-format"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "insta",
  "proptest",
@@ -2110,14 +2110,14 @@ dependencies = [
 
 [[package]]
 name = "styx-gen-go"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "facet-styx",
 ]
 
 [[package]]
 name = "styx-lsp"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "dirs",
  "eyre",
@@ -2146,7 +2146,7 @@ dependencies = [
 
 [[package]]
 name = "styx-lsp-ext"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "facet",
  "roam",
@@ -2155,14 +2155,14 @@ dependencies = [
 
 [[package]]
 name = "styx-lsp-test-schema"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "styx-parse"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "ariadne",
  "facet",
@@ -2182,7 +2182,7 @@ dependencies = [
 
 [[package]]
 name = "styx-tokenizer"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "facet",
  "facet-testhelpers",
@@ -2191,7 +2191,7 @@ dependencies = [
 
 [[package]]
 name = "styx-tree"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "ariadne",
  "facet",
@@ -2205,7 +2205,7 @@ dependencies = [
 
 [[package]]
 name = "styx-wasm"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "serde",
  "serde-wasm-bindgen",
@@ -2267,7 +2267,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2560,7 +2560,7 @@ checksum = "4ae62f7eae5eb549c71b76658648b72cc6111f2d87d24a1e31fa907f4943e3ce"
 
 [[package]]
 name = "tree-sitter-styx"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -2764,7 +2764,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
