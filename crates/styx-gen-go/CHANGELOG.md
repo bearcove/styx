@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2](https://github.com/bearcove/styx/compare/styx-gen-go-v1.0.1...styx-gen-go-v1.0.2) - 2026-02-02
+
+### Other
+
+- updated the following local packages: facet-styx
+
 ## [1.0.1](https://github.com/bearcove/styx/compare/styx-gen-go-v1.0.0...styx-gen-go-v1.0.1) - 2026-01-23
 
 ### Other
