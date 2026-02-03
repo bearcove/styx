@@ -5,6 +5,7 @@ target/
 .playwright-mcp/
 node_modules/
 pnpm-lock.yaml
+.handoffs/
 
 # IDE files
 .idea
