@@ -57,14 +57,14 @@ lto = "thin"
 
 # # Uncomment to develop facet
 # [patch."https://github.com/facet-rs/facet"]
-# facet = { path = "../facet/facet" }
-# facet-core = { path = "../facet/facet-core" }
-# facet-reflect = { path = "../facet/facet-reflect" }
-# facet-format = { path = "../facet/facet-format" }
-# facet-path = { path = "../facet/facet-path" }
-# facet-postcard = { path = "../facet/facet-postcard" }
-# facet-pretty = { path = "../facet/facet-pretty" }
-# facet-value = { path = "../facet/facet-value" }
-# facet-dessert = { path = "../facet/facet-dessert" }
-# facet-solver = { path = "../facet/facet-solver" }
-# facet-json = { path = "../facet/facet-json" }
+# facet = { path = "/Users/amos/.claude-worktrees/facet/exciting-mccarthy/facet" }
+# facet-core = { path = "/Users/amos/.claude-worktrees/facet/exciting-mccarthy/facet-core" }
+# facet-reflect = { path = "/Users/amos/.claude-worktrees/facet/exciting-mccarthy/facet-reflect" }
+# facet-format = { path = "/Users/amos/.claude-worktrees/facet/exciting-mccarthy/facet-format" }
+# facet-path = { path = "/Users/amos/.claude-worktrees/facet/exciting-mccarthy/facet-path" }
+# facet-postcard = { path = "/Users/amos/.claude-worktrees/facet/exciting-mccarthy/facet-postcard" }
+# facet-pretty = { path = "/Users/amos/.claude-worktrees/facet/exciting-mccarthy/facet-pretty" }
+# facet-value = { path = "/Users/amos/.claude-worktrees/facet/exciting-mccarthy/facet-value" }
+# facet-dessert = { path = "/Users/amos/.claude-worktrees/facet/exciting-mccarthy/facet-dessert" }
+# facet-solver = { path = "/Users/amos/.claude-worktrees/facet/exciting-mccarthy/facet-solver" }
+# facet-json = { path = "/Users/amos/.claude-worktrees/facet/exciting-mccarthy/facet-json" }
