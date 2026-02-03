@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0](https://github.com/bearcove/styx/compare/styx-cst-v1.0.1...styx-cst-v2.0.0) - 2026-02-02
+
+### Fixed
+
+- *(lsp)* report diagnostics for "too many atoms" parse errors
+
+### Other
+
+- *(styx-parse)* Complete parser rewrite with cross-language compliance ([#44](https://github.com/bearcove/styx/pull/44))
+- Add styx-testhelpers crate with ariadne-based test infrastructure ([#41](https://github.com/bearcove/styx/pull/41))
+
 ## [1.0.1](https://github.com/bearcove/styx/compare/styx-parse-v1.0.0...styx-parse-v1.0.1) - 2026-01-23
 
 ### Other
