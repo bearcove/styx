@@ -68,3 +68,4 @@ lto = "thin"
 # facet-dessert = { path = "../facet/facet-dessert" }
 # facet-solver = { path = "../facet/facet-solver" }
 # facet-json = { path = "../facet/facet-json" }
+# facet-testhelpers = { path = "../facet/facet-testhelpers" }
