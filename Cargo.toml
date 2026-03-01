@@ -23,6 +23,12 @@ facet-testhelpers = { git = "https://github.com/facet-rs/facet", branch = "main"
 # CLI parsing
 figue = { git = "https://github.com/bearcove/figue", branch = "main" }
 
+# Roam RPC
+roam = { git = "https://github.com/bearcove/roam", branch = "main", version = "3" }
+roam-types = { git = "https://github.com/bearcove/roam", branch = "main", version = "3" }
+roam-core = { git = "https://github.com/bearcove/roam", branch = "main", version = "3" }
+roam-stream = { git = "https://github.com/bearcove/roam", branch = "main", version = "3" }
+
 # Tracing
 tracing = "0.1"
 
@@ -54,6 +60,13 @@ opt-level = "s"
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+# Uncomment to develop roam
+[patch."https://github.com/roam-rs/roam"]
+roam = { path = "../roam/rust/roam" }
+roam-types = { path = "../roam/rust/roam-types" }
+roam-core = { path = "../roam/rust/roam-core" }
+roam-stream = { path = "../roam/rust/roam-stream" }
 
 # # Uncomment to develop facet
 # [patch."https://github.com/facet-rs/facet"]
