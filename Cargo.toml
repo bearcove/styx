@@ -26,10 +26,10 @@ facet-postcard = { version = "0.44" }
 figue = { version = "2" }
 
 # Roam RPC
-roam = { version = "7.0.0-alpha.3" }
-roam-types = { version = "7.0.0-alpha.3" }
-roam-core = { version = "7.0.0-alpha.3" }
-roam-stream = { version = "7.0.0-alpha.3" }
+roam = { version = "7" }
+roam-types = { version = "7" }
+roam-core = { version = "7" }
+roam-stream = { version = "7" }
 
 # Tracing
 tracing = "0.1"
