@@ -2296,7 +2296,6 @@ dependencies = [
  "futures",
  "glob",
  "hex",
- "roam",
  "roam-core",
  "roam-stream",
  "roam-types",
