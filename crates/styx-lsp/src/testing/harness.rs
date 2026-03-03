@@ -107,7 +107,7 @@ pub struct TestHarness {
     #[allow(dead_code)]
     process: Child,
     /// Extension client for making calls.
-    client: StyxLspExtensionClient<roam_core::DriverCaller>,
+    client: StyxLspExtensionClient,
     /// Documents loaded in the harness (for StyxLspHost callbacks).
     documents: DocumentMap,
     /// Cursor positions for loaded documents.
@@ -146,7 +146,7 @@ impl TestHarness {
 
         // Initiate roam session (we're the initiator, like the real LSP)
         let (client, _session_handle) = roam_core::initiator(conduit)
-            .establish::<StyxLspExtensionClient<_>>(dispatcher)
+            .establish::<StyxLspExtensionClient>(dispatcher)
             .await
             .map_err(|e| HarnessError::HandshakeFailed(e.to_string()))?;
 

@@ -104,7 +104,7 @@ struct Extension {
     #[allow(dead_code)]
     config: LspExtensionConfig,
     /// Roam client for making calls.
-    client: StyxLspExtensionClient<roam_core::DriverCaller>,
+    client: StyxLspExtensionClient,
 }
 
 impl ExtensionManager {
@@ -194,10 +194,7 @@ impl ExtensionManager {
     /// Get an extension client for a schema.
     ///
     /// Returns `None` if no extension is spawned for this schema.
-    pub async fn get_client(
-        &self,
-        schema_id: &str,
-    ) -> Option<StyxLspExtensionClient<roam_core::DriverCaller>> {
+    pub async fn get_client(&self, schema_id: &str) -> Option<StyxLspExtensionClient> {
         let extensions = self.extensions.read().await;
         extensions.get(schema_id).map(|ext| ext.client.clone())
     }
@@ -248,7 +245,7 @@ impl ExtensionManager {
 
         // Initiate roam session (LSP is the initiator)
         let (client, _session_handle) = roam_core::initiator(conduit)
-            .establish::<StyxLspExtensionClient<_>>(dispatcher)
+            .establish::<StyxLspExtensionClient>(dispatcher)
             .await
             .map_err(|e| {
                 warn!(command, error = %e, "Failed roam handshake with extension");
