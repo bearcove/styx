@@ -525,8 +525,9 @@ dependencies = [
 
 [[package]]
 name = "facet"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98c578b0cf6efa3459c6ff5f9f67ddfa668ba778fdbf301a1ba6bb493bf32aba"
 dependencies = [
  "autocfg",
  "facet-core",
@@ -536,8 +537,9 @@ dependencies = [
 
 [[package]]
 name = "facet-cargo-toml"
-version = "0.43.0"
-source = "git+https://github.com/bearcove/facet-cargo-toml?branch=main#c4dd2db9d7f9401f522db76f876bf6775074f8e0"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1dfe5ee67dafa3ee39af19b47e0da41337f72e7e0e841f4400dec966b8cafa8"
 dependencies = [
  "camino",
  "facet",
@@ -550,8 +552,9 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf2c09e5a796b8989e7555cbe097ddd3c3ffa4c02392b9b4ad0d7cd48b1af5c2"
 dependencies = [
  "autocfg",
  "camino",
@@ -563,8 +566,9 @@ dependencies = [
 
 [[package]]
 name = "facet-dessert"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64092a2ececf59431c1b98561ba12e308c20185185fedc8c5396468e87573435"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -572,16 +576,18 @@ dependencies = [
 
 [[package]]
 name = "facet-error"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d19f1faf0c1074b7584a43774789e06234f839dc7207ff3fcf2fbd7902429f96"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "facet-format"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b93a20a96d7dc1ab469896487f26f5c467b5b28c0448b4419fe8497ed1c6e5c"
 dependencies = [
  "facet-core",
  "facet-dessert",
@@ -593,8 +599,9 @@ dependencies = [
 
 [[package]]
 name = "facet-json"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25cb1beadcaada7bbadd9856948061dbda047d8aad9eba1b8de1d2eec2fff9e5"
 dependencies = [
  "facet",
  "facet-core",
@@ -605,8 +612,9 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-parse"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0ecddfa2b01f0ea083571f9cbb945222bc6603ce2c1cad9105eb8a432e09298"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -615,8 +623,9 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-types"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e22ff06d4c4bb3cc6cfaf51d20c66444d7845ab047a7cd500b2677f01a9f6fd9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -625,16 +634,18 @@ dependencies = [
 
 [[package]]
 name = "facet-macros"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cd4fe21b304e67937988fd88ef0907453a11921597fddff8ea8dc711575bfc7"
 dependencies = [
  "facet-macros-impl",
 ]
 
 [[package]]
 name = "facet-macros-impl"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b050ae34e587b27fa45e33720722be8ccc20a3d64f4560882cffae1ce65c564f"
 dependencies = [
  "facet-macro-parse",
  "facet-macro-types",
@@ -646,16 +657,18 @@ dependencies = [
 
 [[package]]
 name = "facet-path"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34ae380f4553db1a2ab33fb75035e7d86c178f384c4ded2e1681daec58cbbfc2"
 dependencies = [
  "facet-core",
 ]
 
 [[package]]
 name = "facet-postcard"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec32d82e6375dc12fed002e89cc18846fe63a501cb5e4f235e84e262a4fa9d32"
 dependencies = [
  "camino",
  "facet-core",
@@ -668,8 +681,9 @@ dependencies = [
 
 [[package]]
 name = "facet-pretty"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "682119408855d2a5de7cc23b0477ed19e332e0272caa110063eeda82d8809cc2"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -678,8 +692,9 @@ dependencies = [
 
 [[package]]
 name = "facet-reflect"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2469bdb237a3f3cac3077b784e86be88e379534ff9322d53b3d673e27bcb0988"
 dependencies = [
  "facet-core",
  "facet-path",
@@ -691,8 +706,9 @@ dependencies = [
 
 [[package]]
 name = "facet-solver"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e87fefb7fabe10278980588bb13bcfde4faeda4b3c29ae83c3c66efe0cad1a5"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -723,8 +739,9 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "870ca4019be3286b91b07a521f09cf5584e3ed36ff9c1a71a07321052e4b7b01"
 dependencies = [
  "color-backtrace",
  "facet-testhelpers-macros",
@@ -735,8 +752,9 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers-macros"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "801976db4d92440e8a249aba729d34b85d59afe5d01f3c1f6ad20f27c5754ac6"
 dependencies = [
  "quote",
  "unsynn",
@@ -744,8 +762,9 @@ dependencies = [
 
 [[package]]
 name = "facet-toml"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df9c584d182d3345133c8360c7646c942e27f82031365d8dde32a425b460894f"
 dependencies = [
  "facet-core",
  "facet-format",
@@ -755,8 +774,9 @@ dependencies = [
 
 [[package]]
 name = "facet-value"
-version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#8a5a4685bce7a2959a178003aed6aa77f6fc36d0"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21f4cd189eca0104bff26ba3ebb45a33ff6d01288c289293efb4133c1d6feb4f"
 dependencies = [
  "facet-core",
  "facet-format",
@@ -772,8 +792,9 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "figue"
-version = "1.0.0"
-source = "git+https://github.com/bearcove/figue?branch=main#96733218a3873d277095402cc9aa3b37d3820fa3"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f33f286df173a047e864b39279b14de5e08dc5c7c5c719f81e96a8602049d4dd"
 dependencies = [
  "ariadne",
  "camino",
@@ -797,8 +818,9 @@ dependencies = [
 
 [[package]]
 name = "figue-attrs"
-version = "1.0.0"
-source = "git+https://github.com/bearcove/figue?branch=main#96733218a3873d277095402cc9aa3b37d3820fa3"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b09be1cd2a5c7295aa5dae9dd5585db38b3ab59c751336ebd4d692b867415703"
 dependencies = [
  "facet",
 ]
@@ -952,20 +974,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
- "r-efi",
+ "r-efi 5.3.0",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
 name = "getrandom"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "139ef39800118c7683f2fd3c98c1b23c09ae076556b435f8e9064ae108aaeeec"
+checksum = "0de51e6874e94e7bf76d726fc5d13ba782deca734ff60d5bb2fb2607c7406555"
 dependencies = [
  "cfg-if",
  "libc",
- "r-efi",
+ "r-efi 6.0.0",
  "wasip2",
  "wasip3",
 ]
@@ -1379,8 +1403,9 @@ dependencies = [
 
 [[package]]
 name = "moire"
-version = "0.1.0"
-source = "git+https://github.com/bearcove/moire?branch=main#e64fb23f0a98142fd3aa1cd980c9363083973d89"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac52dcc0ff5b4710a66626370b1bf85ba3d924fd8019e8cfa100e8dafffda4ad"
 dependencies = [
  "moire-macros-noop",
  "moire-tokio",
@@ -1389,13 +1414,15 @@ dependencies = [
 
 [[package]]
 name = "moire-macros-noop"
-version = "0.1.0"
-source = "git+https://github.com/bearcove/moire?branch=main#e64fb23f0a98142fd3aa1cd980c9363083973d89"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92ccdc0bf403f5ecf29c09e8e9f178caed89a914ea032e0c2d99d3824b78892d"
 
 [[package]]
 name = "moire-runtime"
-version = "0.1.0"
-source = "git+https://github.com/bearcove/moire?branch=main#e64fb23f0a98142fd3aa1cd980c9363083973d89"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "568cc05b223c4c76247467e3bdaa7862f05c38d5c8f6e44198613880f90ecd98"
 dependencies = [
  "ctor",
  "facet",
@@ -1410,8 +1437,9 @@ dependencies = [
 
 [[package]]
 name = "moire-tokio"
-version = "0.1.0"
-source = "git+https://github.com/bearcove/moire?branch=main#e64fb23f0a98142fd3aa1cd980c9363083973d89"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdb30c43038ce71c727da5a4ff01d09dd4c823486cc17b3b08661420d0ceda43"
 dependencies = [
  "ctor",
  "moire-runtime",
@@ -1422,8 +1450,9 @@ dependencies = [
 
 [[package]]
 name = "moire-trace-capture"
-version = "0.1.0"
-source = "git+https://github.com/bearcove/moire?branch=main#e64fb23f0a98142fd3aa1cd980c9363083973d89"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6685ebbdee1253529c9074c41d8288504b640ffe8c21176ce464fef5c5c00c38"
 dependencies = [
  "libc",
  "moire-trace-types",
@@ -1431,16 +1460,18 @@ dependencies = [
 
 [[package]]
 name = "moire-trace-types"
-version = "0.1.0"
-source = "git+https://github.com/bearcove/moire?branch=main#e64fb23f0a98142fd3aa1cd980c9363083973d89"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ef6f98b447211257a517d101f0f5cf4300627cd6fd1c0c13ff53d157a872c9d"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "moire-types"
-version = "0.1.0"
-source = "git+https://github.com/bearcove/moire?branch=main#e64fb23f0a98142fd3aa1cd980c9363083973d89"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "667b2fc41e30d3b0f7d0d29e978d3f473afaf0e0be355202eead317e35ace200"
 dependencies = [
  "facet",
  "facet-value",
@@ -1449,8 +1480,9 @@ dependencies = [
 
 [[package]]
 name = "moire-wasm"
-version = "0.1.0"
-source = "git+https://github.com/bearcove/moire?branch=main#e64fb23f0a98142fd3aa1cd980c9363083973d89"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f143cef34407271acdbca3af106d82b330693e0990ef87df146441392d8a9577"
 dependencies = [
  "async-channel",
  "async-lock",
@@ -1464,8 +1496,9 @@ dependencies = [
 
 [[package]]
 name = "moire-wire"
-version = "0.1.0"
-source = "git+https://github.com/bearcove/moire?branch=main#e64fb23f0a98142fd3aa1cd980c9363083973d89"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf0ec84eeb2e23a83339cf5edc9d5a3a9ec5849416bd4051951fba416ea3e0f7"
 dependencies = [
  "facet",
  "facet-json",
@@ -1679,6 +1712,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
+name = "r-efi"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
+
+[[package]]
 name = "rand"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1767,65 +1806,57 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "roam"
-version = "3.0.0"
-source = "git+https://github.com/bearcove/roam?branch=main#fdb3a4bd89a5861ef169916e0679a96786f93995"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c65e85a0f43bd085f7230ec3de1f396fa76f3bab06ed73665b411ea9571352d"
 dependencies = [
  "facet",
- "facet-core",
  "facet-postcard",
- "facet-pretty",
+ "roam-core",
  "roam-hash",
- "roam-schema",
  "roam-service-macros",
- "roam-session",
- "roam-wire",
- "tracing",
+ "roam-types",
 ]
 
 [[package]]
-name = "roam-frame"
-version = "3.0.0"
-source = "git+https://github.com/bearcove/roam?branch=main#fdb3a4bd89a5861ef169916e0679a96786f93995"
+name = "roam-core"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ca4712ba9acfbb6a8d582862a8db99f30edcf23cd776d8b3749a9e413ca91f5"
 dependencies = [
- "bytes",
  "facet",
- "static_assertions",
+ "facet-core",
+ "facet-error",
+ "facet-format",
+ "facet-postcard",
+ "facet-reflect",
+ "getrandom 0.3.4",
+ "moire",
+ "roam-types",
+ "smallvec 1.15.1",
+ "tokio",
+ "tracing",
+ "wasm-bindgen-futures",
+ "zerocopy",
 ]
 
 [[package]]
 name = "roam-hash"
-version = "3.0.0"
-source = "git+https://github.com/bearcove/roam?branch=main#fdb3a4bd89a5861ef169916e0679a96786f93995"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c90ee51fc268cb1007c66ab3bed504773f796cf601e1813fa78d36ea9dbac74"
 dependencies = [
  "blake3",
  "facet-core",
  "heck 0.5.0",
- "roam-schema",
+ "roam-types",
 ]
 
 [[package]]
-name = "roam-macros-parse"
-version = "3.0.0"
-source = "git+https://github.com/bearcove/roam?branch=main#fdb3a4bd89a5861ef169916e0679a96786f93995"
-dependencies = [
- "proc-macro2",
- "unsynn",
-]
-
-[[package]]
-name = "roam-schema"
-version = "3.0.0"
-source = "git+https://github.com/bearcove/roam?branch=main#fdb3a4bd89a5861ef169916e0679a96786f93995"
-dependencies = [
- "facet",
- "facet-core",
- "roam-session",
-]
-
-[[package]]
-name = "roam-service-macros"
-version = "3.0.0"
-source = "git+https://github.com/bearcove/roam?branch=main#fdb3a4bd89a5861ef169916e0679a96786f93995"
+name = "roam-macros-core"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6120ec157aa9af0e26c4d964f72f477f5ca1e8305a9f9460a39ff91d311ad4a8"
 dependencies = [
  "facet-cargo-toml",
  "heck 0.5.0",
@@ -1835,56 +1866,51 @@ dependencies = [
 ]
 
 [[package]]
-name = "roam-session"
-version = "3.0.0"
-source = "git+https://github.com/bearcove/roam?branch=main#fdb3a4bd89a5861ef169916e0679a96786f93995"
+name = "roam-macros-parse"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad22d81611eb65e7e89ab7b3c7379af806d3eca8a814ecf1b7a3d985f8486a9c"
 dependencies = [
- "facet",
- "facet-core",
- "facet-format",
- "facet-path",
- "facet-postcard",
- "facet-pretty",
- "facet-reflect",
- "futures-util",
- "moire",
- "moire-types",
- "roam-frame",
- "roam-task-local",
- "roam-wire",
- "tokio",
- "ulid",
+ "proc-macro2",
+ "unsynn",
+]
+
+[[package]]
+name = "roam-service-macros"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e289e88b1f67a00097d637c95c57d7ccecea8da364d882c125144977f43e9d8a"
+dependencies = [
+ "proc-macro2",
+ "roam-macros-core",
 ]
 
 [[package]]
 name = "roam-stream"
-version = "3.0.0"
-source = "git+https://github.com/bearcove/roam?branch=main#fdb3a4bd89a5861ef169916e0679a96786f93995"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "483987f99c071e9039acb07632993a9c7740516f36153bae87f9d287e0ebb959"
 dependencies = [
- "facet",
- "facet-postcard",
- "facet-reflect",
  "moire",
- "roam-session",
- "roam-wire",
+ "roam-types",
  "tokio",
 ]
 
 [[package]]
-name = "roam-task-local"
-version = "3.0.0"
-source = "git+https://github.com/bearcove/roam?branch=main#fdb3a4bd89a5861ef169916e0679a96786f93995"
+name = "roam-types"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37333cc6a1bd76ada6b8a9ef7d6bed6d155be7baca3dcd0bd052ce881a724cc2"
 dependencies = [
- "pin-project-lite",
-]
-
-[[package]]
-name = "roam-wire"
-version = "3.0.0"
-source = "git+https://github.com/bearcove/roam?branch=main#fdb3a4bd89a5861ef169916e0679a96786f93995"
-dependencies = [
+ "bitflags 2.11.0",
  "facet",
+ "facet-core",
+ "facet-path",
  "facet-postcard",
+ "futures-channel",
+ "smallvec 1.15.1",
+ "structstruck",
+ "tokio",
 ]
 
 [[package]]
@@ -2141,12 +2167,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
-name = "static_assertions"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
-
-[[package]]
 name = "streaming-iterator"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2166,6 +2186,17 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "structstruck"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f318209842d04696a2c139cd3d5d4d75c4a9e2af435b077aa5cbd391a79c34b3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "venial",
+]
 
 [[package]]
 name = "styx-cli"
@@ -2265,8 +2296,10 @@ dependencies = [
  "futures",
  "glob",
  "hex",
- "roam-session",
+ "roam",
+ "roam-core",
  "roam-stream",
+ "roam-types",
  "serde_json",
  "sha2",
  "styx-cst",
@@ -2403,7 +2436,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "82a72c767771b47409d2345987fda8628641887d5466101319899796367354a0"
 dependencies = [
  "fastrand",
- "getrandom 0.4.1",
+ "getrandom 0.4.2",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -2465,9 +2498,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.49.0"
+version = "1.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72a2903cd7736441aac9df9d7688bd0ce48edccaadf181c3b90be801e81d3d86"
+checksum = "27ad5e34374e03cfffefc301becb44e9dc3c17584f414349ebe29ed26661822d"
 dependencies = [
  "bytes",
  "libc",
@@ -2482,9 +2515,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-macros"
-version = "2.6.0"
+version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af407857209536a95c8e56f8231ef2c2e2aff839b22e07a1ffcbc617e9db9fa5"
+checksum = "5c55a2eff8b69ce66c84f85e1da1c233edc36ceb85a2058d11b0d6a3c7e7569c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2718,16 +2751,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
 
 [[package]]
-name = "ulid"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "470dbf6591da1b39d43c14523b2b469c86879a53e8b758c8e090a470fe7b1fbe"
-dependencies = [
- "rand",
- "web-time",
-]
-
-[[package]]
 name = "unarray"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2792,6 +2815,16 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
+
+[[package]]
+name = "venial"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61584a325b16f97b5b25fcc852eb9550843a251057a5e3e5992d2376f3df4bb2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
 
 [[package]]
 name = "version_check"
@@ -2939,16 +2972,6 @@ name = "web-sys"
 version = "0.3.91"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "854ba17bb104abfb26ba36da9729addc7ce7f06f5c0f90f3c391f8461cca21f9"
-dependencies = [
- "js-sys",
- "wasm-bindgen",
-]
-
-[[package]]
-name = "web-time"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
