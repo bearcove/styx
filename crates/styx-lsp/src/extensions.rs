@@ -24,9 +24,9 @@ use std::process::Stdio;
 use std::task::{Context, Poll};
 
 use facet_styx::LspExtensionConfig;
-use roam_core::{BareConduit, Driver};
+use roam_core::BareConduit;
 use roam_stream::StreamLink;
-use roam_types::{MessageFamily, Parity};
+use roam_types::MessageFamily;
 pub use styx_lsp_ext::StyxLspExtensionClient;
 use styx_lsp_ext::{
     GetDocumentParams, GetSchemaParams, GetSourceParams, GetSubtreeParams, OffsetToPositionParams,

@@ -14,22 +14,22 @@ ariadne = "0.6"
 strip-ansi-escapes = "0.2"
 
 # Facet crates
-facet = { version = "0.44.0" }
-facet-core = { version = "0.44.0" }
-facet-format = { version = "0.44.0" }
-facet-reflect = { version = "0.44.0" }
-facet-testhelpers = { version = "0.44.0" }
-facet-json = { version = "0.44.0" }
-facet-postcard = { version = "0.44.0" }
+facet = { version = "0.44" }
+facet-core = { version = "0.44" }
+facet-format = { version = "0.44" }
+facet-reflect = { version = "0.44" }
+facet-testhelpers = { version = "0.44" }
+facet-json = { version = "0.44" }
+facet-postcard = { version = "0.44" }
 
 # CLI parsing
-figue = { git = "https://github.com/bearcove/figue", branch = "main" }
+figue = { version = "2" }
 
 # Roam RPC
-roam = { git = "https://github.com/bearcove/roam", branch = "main", version = "7.0.0-alpha.1" }
-roam-types = { git = "https://github.com/bearcove/roam", branch = "main", version = "7.0.0-alpha.1" }
-roam-core = { git = "https://github.com/bearcove/roam", branch = "main", version = "7.0.0-alpha.1" }
-roam-stream = { git = "https://github.com/bearcove/roam", branch = "main", version = "7.0.0-alpha.1" }
+roam = { version = "7.0.0-alpha.1" }
+roam-types = { version = "7.0.0-alpha.1" }
+roam-core = { version = "7.0.0-alpha.1" }
+roam-stream = { version = "7.0.0-alpha.1" }
 
 # Tracing
 tracing = "0.1"
@@ -63,12 +63,12 @@ opt-level = "s"
 inherits = "release"
 lto = "thin"
 
-# Use local roam during v7 migration
-[patch."https://github.com/bearcove/roam"]
-roam = { path = "../roam/rust/roam" }
-roam-types = { path = "../roam/rust/roam-types" }
-roam-core = { path = "../roam/rust/roam-core" }
-roam-stream = { path = "../roam/rust/roam-stream" }
+# # Use local roam during v7 migration
+# [patch."https://github.com/bearcove/roam"]
+# roam = { path = "../roam/rust/roam" }
+# roam-types = { path = "../roam/rust/roam-types" }
+# roam-core = { path = "../roam/rust/roam-core" }
+# roam-stream = { path = "../roam/rust/roam-stream" }
 
 # # Uncomment to develop facet
 # [patch."https://github.com/facet-rs/facet"]

@@ -26,14 +26,13 @@ use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
 
-use roam_core::{BareConduit, Driver};
+use roam_core::BareConduit;
 use roam_stream::StreamLink;
-use roam_types::{MessageFamily, Parity};
+use roam_types::MessageFamily;
 use styx_cst::parse;
 use styx_tree::Value;
 use tokio::process::{Child, Command};
 use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
 use tower_lsp::lsp_types::Url;
 
 use crate::extensions::StyxLspHostImpl;
@@ -109,8 +108,6 @@ pub struct TestHarness {
     process: Child,
     /// Extension client for making calls.
     client: StyxLspExtensionClient<roam_core::DriverCaller>,
-    /// Driver task.
-    driver_handle: JoinHandle<()>,
     /// Documents loaded in the harness (for StyxLspHost callbacks).
     documents: DocumentMap,
     /// Cursor positions for loaded documents.
@@ -148,28 +145,14 @@ impl TestHarness {
         let dispatcher = StyxLspHostDispatcher::new(host);
 
         // Initiate roam session (we're the initiator, like the real LSP)
-        let (mut session, conn_handle, _session_handle) = roam_core::initiator(conduit)
-            .establish()
+        let (client, _session_handle) = roam_core::initiator(conduit)
+            .establish::<StyxLspExtensionClient<_>>(dispatcher)
             .await
             .map_err(|e| HarnessError::HandshakeFailed(e.to_string()))?;
-
-        let mut driver = Driver::new(conn_handle, dispatcher, Parity::Odd);
-        let caller = driver.caller();
-
-        // Spawn session and driver
-        let driver_handle = tokio::spawn(async move {
-            session.run().await;
-        });
-        tokio::spawn(async move {
-            driver.run().await;
-        });
-
-        let client = StyxLspExtensionClient::new(caller);
 
         Ok(Self {
             process,
             client,
-            driver_handle,
             documents,
             cursors,
         })
@@ -497,7 +480,6 @@ impl TestHarness {
             .await
             .map_err(|e| HarnessError::CallFailed(format!("{e:?}")))?;
 
-        self.driver_handle.abort();
         Ok(())
     }
 }
