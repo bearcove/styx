@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0](https://github.com/bearcove/styx/compare/styx-gen-go-v1.0.1...styx-gen-go-v2.0.0) - 2026-03-03
+
+### Other
+
+- v2.0.0
+
 ## [1.0.1](https://github.com/bearcove/styx/compare/styx-gen-go-v1.0.0...styx-gen-go-v1.0.1) - 2026-01-23
 
 ### Other
