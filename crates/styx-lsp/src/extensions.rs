@@ -36,7 +36,6 @@ use styx_tree::Value;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
 use tower_lsp::lsp_types::Url;
 use tracing::{debug, info, warn};
 
@@ -104,11 +103,8 @@ struct Extension {
     /// Extension config from the schema.
     #[allow(dead_code)]
     config: LspExtensionConfig,
-    /// Roam caller for making calls.
-    caller: roam_core::DriverCaller,
-    /// Driver task handle.
-    #[allow(dead_code)]
-    driver_handle: JoinHandle<()>,
+    /// Roam client for making calls.
+    client: StyxLspExtensionClient<roam_core::DriverCaller>,
 }
 
 impl ExtensionManager {
@@ -203,9 +199,7 @@ impl ExtensionManager {
         schema_id: &str,
     ) -> Option<StyxLspExtensionClient<roam_core::DriverCaller>> {
         let extensions = self.extensions.read().await;
-        extensions
-            .get(schema_id)
-            .map(|ext| StyxLspExtensionClient::new(ext.caller.clone()))
+        extensions.get(schema_id).map(|ext| ext.client.clone())
     }
 
     /// Spawn an extension process, establish roam connection, and initialize it.
@@ -253,8 +247,8 @@ impl ExtensionManager {
         let dispatcher = StyxLspHostDispatcher::new(host_impl);
 
         // Initiate roam session (LSP is the initiator)
-        let (mut session, conn_handle, _session_handle) = roam_core::initiator(conduit)
-            .establish()
+        let (client, _session_handle) = roam_core::initiator(conduit)
+            .establish::<StyxLspExtensionClient<_>>(dispatcher)
             .await
             .map_err(|e| {
                 warn!(command, error = %e, "Failed roam handshake with extension");
@@ -263,21 +257,6 @@ impl ExtensionManager {
             .ok()?;
 
         debug!(command, "Roam session established with extension");
-
-        let mut driver = Driver::new(conn_handle, dispatcher, Parity::Odd);
-        let caller = driver.caller();
-
-        // Spawn session and driver
-        let driver_handle = tokio::spawn(async move {
-            session.run().await;
-            drop(session);
-        });
-        tokio::spawn(async move {
-            driver.run().await;
-        });
-
-        // Initialize the extension
-        let client = StyxLspExtensionClient::new(caller.clone());
         let init_result = client
             .initialize(styx_lsp_ext::InitializeParams {
                 styx_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -304,8 +283,7 @@ impl ExtensionManager {
         Some(Extension {
             process,
             config: config.clone(),
-            caller,
-            driver_handle,
+            client,
         })
     }
 
@@ -314,9 +292,6 @@ impl ExtensionManager {
         let mut extensions = self.extensions.write().await;
         for (schema_id, mut ext) in extensions.drain() {
             debug!(schema_id, "Shutting down extension");
-            // Abort the driver task
-            ext.driver_handle.abort();
-            // Kill the process
             let _ = ext.process.kill().await;
         }
     }
