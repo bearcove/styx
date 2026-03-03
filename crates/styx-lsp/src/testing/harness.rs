@@ -26,8 +26,9 @@ use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
 
-use roam_session::HandshakeConfig;
-use roam_stream::CobsFramed;
+use roam_core::{BareConduit, Driver};
+use roam_stream::StreamLink;
+use roam_types::{MessageFamily, Parity};
 use styx_cst::parse;
 use styx_tree::Value;
 use tokio::process::{Child, Command};
@@ -35,7 +36,7 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tower_lsp::lsp_types::Url;
 
-use crate::extensions::{ChildStdio, StyxLspHostImpl};
+use crate::extensions::StyxLspHostImpl;
 use crate::server::{DocumentMap, DocumentState};
 use styx_lsp_ext::{
     CodeAction, CodeActionParams, CompletionItem, CompletionParams, Cursor, DefinitionParams,
@@ -107,7 +108,7 @@ pub struct TestHarness {
     #[allow(dead_code)]
     process: Child,
     /// Extension client for making calls.
-    client: StyxLspExtensionClient,
+    client: StyxLspExtensionClient<roam_core::DriverCaller>,
     /// Driver task.
     driver_handle: JoinHandle<()>,
     /// Documents loaded in the harness (for StyxLspHost callbacks).
@@ -136,8 +137,8 @@ impl TestHarness {
         let stdin = process.stdin.take().ok_or(HarnessError::NoStdin)?;
         let stdout = process.stdout.take().ok_or(HarnessError::NoStdout)?;
 
-        let stdio = ChildStdio::new(stdin, stdout);
-        let framed = CobsFramed::new(stdio);
+        let link = StreamLink::new(stdout, stdin);
+        let conduit = BareConduit::<MessageFamily, _>::new(link);
 
         let documents: DocumentMap = Arc::new(RwLock::new(HashMap::new()));
         let cursors: CursorMap = Arc::new(RwLock::new(HashMap::new()));
@@ -146,18 +147,24 @@ impl TestHarness {
         let host = StyxLspHostImpl::new(documents.clone());
         let dispatcher = StyxLspHostDispatcher::new(host);
 
-        // Initiate roam handshake (we're the initiator, like the real LSP)
-        let (handle, _incoming, driver) =
-            roam_session::initiate_framed(framed, HandshakeConfig::default(), dispatcher)
-                .await
-                .map_err(|e| HarnessError::HandshakeFailed(e.to_string()))?;
+        // Initiate roam session (we're the initiator, like the real LSP)
+        let (mut session, conn_handle, _session_handle) = roam_core::initiator(conduit)
+            .establish()
+            .await
+            .map_err(|e| HarnessError::HandshakeFailed(e.to_string()))?;
 
-        let client = StyxLspExtensionClient::new(handle);
+        let mut driver = Driver::new(conn_handle, dispatcher, Parity::Odd);
+        let caller = driver.caller();
 
-        // Spawn the driver
+        // Spawn session and driver
         let driver_handle = tokio::spawn(async move {
-            let _ = driver.run().await;
+            session.run().await;
         });
+        tokio::spawn(async move {
+            driver.run().await;
+        });
+
+        let client = StyxLspExtensionClient::new(caller);
 
         Ok(Self {
             process,
@@ -181,7 +188,7 @@ impl TestHarness {
                 schema_id: schema_id.to_string(),
             })
             .await
-            .map_err(|e| HarnessError::CallFailed(e.to_string()))
+            .map_err(|e| HarnessError::CallFailed(format!("{e:?}")))
     }
 
     /// Load a document into the harness.
@@ -264,7 +271,7 @@ impl TestHarness {
                 tagged_context,
             })
             .await
-            .map_err(|e| HarnessError::CallFailed(e.to_string()))
+            .map_err(|e| HarnessError::CallFailed(format!("{e:?}")))
     }
 
     /// Get hover info at the cursor position.
@@ -312,7 +319,7 @@ impl TestHarness {
                 tagged_context,
             })
             .await
-            .map_err(|e| HarnessError::CallFailed(e.to_string()))
+            .map_err(|e| HarnessError::CallFailed(format!("{e:?}")))
     }
 
     /// Get inlay hints for the document.
@@ -345,7 +352,7 @@ impl TestHarness {
                 context,
             })
             .await
-            .map_err(|e| HarnessError::CallFailed(e.to_string()))
+            .map_err(|e| HarnessError::CallFailed(format!("{e:?}")))
     }
 
     /// Get diagnostics for the document.
@@ -373,7 +380,7 @@ impl TestHarness {
                 content,
             })
             .await
-            .map_err(|e| HarnessError::CallFailed(e.to_string()))
+            .map_err(|e| HarnessError::CallFailed(format!("{e:?}")))
     }
 
     /// Get definition locations for the symbol at cursor.
@@ -423,7 +430,7 @@ impl TestHarness {
                 tagged_context,
             })
             .await
-            .map_err(|e| HarnessError::CallFailed(e.to_string()))
+            .map_err(|e| HarnessError::CallFailed(format!("{e:?}")))
     }
 
     /// Get code actions at the cursor position.
@@ -458,7 +465,7 @@ impl TestHarness {
                 content,
             })
             .await
-            .map_err(|e| HarnessError::CallFailed(e.to_string()))?;
+            .map_err(|e| HarnessError::CallFailed(format!("{e:?}")))?;
 
         // Filter diagnostics to those that overlap with cursor offset
         let cursor_offset = cursor_info.offset as u32;
@@ -480,7 +487,7 @@ impl TestHarness {
                 diagnostics: cursor_diagnostics,
             })
             .await
-            .map_err(|e| HarnessError::CallFailed(e.to_string()))
+            .map_err(|e| HarnessError::CallFailed(format!("{e:?}")))
     }
 
     /// Shutdown the extension gracefully.
@@ -488,7 +495,7 @@ impl TestHarness {
         self.client
             .shutdown()
             .await
-            .map_err(|e| HarnessError::CallFailed(e.to_string()))?;
+            .map_err(|e| HarnessError::CallFailed(format!("{e:?}")))?;
 
         self.driver_handle.abort();
         Ok(())

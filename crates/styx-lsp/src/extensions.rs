@@ -24,8 +24,9 @@ use std::process::Stdio;
 use std::task::{Context, Poll};
 
 use facet_styx::LspExtensionConfig;
-use roam_session::{ConnectionHandle, HandshakeConfig};
-use roam_stream::CobsFramed;
+use roam_core::{BareConduit, Driver};
+use roam_stream::StreamLink;
+use roam_types::{MessageFamily, Parity};
 pub use styx_lsp_ext::StyxLspExtensionClient;
 use styx_lsp_ext::{
     GetDocumentParams, GetSchemaParams, GetSourceParams, GetSubtreeParams, OffsetToPositionParams,
@@ -103,9 +104,8 @@ struct Extension {
     /// Extension config from the schema.
     #[allow(dead_code)]
     config: LspExtensionConfig,
-    /// Roam connection handle for making calls.
-    #[allow(dead_code)]
-    handle: ConnectionHandle,
+    /// Roam caller for making calls.
+    caller: roam_core::DriverCaller,
     /// Driver task handle.
     #[allow(dead_code)]
     driver_handle: JoinHandle<()>,
@@ -195,19 +195,17 @@ impl ExtensionManager {
         ExtensionResult::Running
     }
 
-    /// Get the connection handle for a schema's extension.
-    pub async fn get_handle(&self, schema_id: &str) -> Option<ConnectionHandle> {
-        let extensions = self.extensions.read().await;
-        extensions.get(schema_id).map(|ext| ext.handle.clone())
-    }
-
     /// Get an extension client for a schema.
     ///
     /// Returns `None` if no extension is spawned for this schema.
-    pub async fn get_client(&self, schema_id: &str) -> Option<StyxLspExtensionClient> {
-        self.get_handle(schema_id)
-            .await
-            .map(StyxLspExtensionClient::new)
+    pub async fn get_client(
+        &self,
+        schema_id: &str,
+    ) -> Option<StyxLspExtensionClient<roam_core::DriverCaller>> {
+        let extensions = self.extensions.read().await;
+        extensions
+            .get(schema_id)
+            .map(|ext| StyxLspExtensionClient::new(ext.caller.clone()))
     }
 
     /// Spawn an extension process, establish roam connection, and initialize it.
@@ -243,13 +241,10 @@ impl ExtensionManager {
         // Take stdin/stdout for roam communication
         let stdin = process.stdin.take()?;
         let stdout = process.stdout.take()?;
-        let stdio = ChildStdio::new(stdin, stdout);
 
-        // Wrap in COBS framing for roam
-        let framed = CobsFramed::new(stdio);
-
-        // Initiate roam handshake (LSP is the initiator)
-        let handshake_config = HandshakeConfig::default();
+        // Wrap in length-prefix framing for roam
+        let link = StreamLink::new(stdout, stdin);
+        let conduit = BareConduit::<MessageFamily, _>::new(link);
 
         // Create host dispatcher for extension callbacks
         let host_impl = StyxLspHostImpl {
@@ -257,27 +252,32 @@ impl ExtensionManager {
         };
         let dispatcher = StyxLspHostDispatcher::new(host_impl);
 
-        // Use initiate_framed for the initiating side
-        let (handle, _incoming, driver) =
-            roam_session::initiate_framed(framed, handshake_config, dispatcher)
-                .await
-                .map_err(|e| {
-                    warn!(command, error = %e, "Failed roam handshake with extension");
-                    e
-                })
-                .ok()?;
+        // Initiate roam session (LSP is the initiator)
+        let (mut session, conn_handle, _session_handle) = roam_core::initiator(conduit)
+            .establish()
+            .await
+            .map_err(|e| {
+                warn!(command, error = %e, "Failed roam handshake with extension");
+                e
+            })
+            .ok()?;
 
         debug!(command, "Roam session established with extension");
 
-        // Spawn the driver
+        let mut driver = Driver::new(conn_handle, dispatcher, Parity::Odd);
+        let caller = driver.caller();
+
+        // Spawn session and driver
         let driver_handle = tokio::spawn(async move {
-            if let Err(e) = driver.run().await {
-                warn!(error = %e, "Extension driver error");
-            }
+            session.run().await;
+            drop(session);
+        });
+        tokio::spawn(async move {
+            driver.run().await;
         });
 
         // Initialize the extension
-        let client = StyxLspExtensionClient::new(handle.clone());
+        let client = StyxLspExtensionClient::new(caller.clone());
         let init_result = client
             .initialize(styx_lsp_ext::InitializeParams {
                 styx_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -296,7 +296,7 @@ impl ExtensionManager {
                 );
             }
             Err(e) => {
-                warn!(command, error = %e, "Failed to initialize extension");
+                warn!(command, error = ?e, "Failed to initialize extension");
                 return None;
             }
         }
@@ -304,7 +304,7 @@ impl ExtensionManager {
         Some(Extension {
             process,
             config: config.clone(),
-            handle,
+            caller,
             driver_handle,
         })
     }
@@ -358,17 +358,12 @@ impl StyxLspHostImpl {
 }
 
 impl StyxLspHost for StyxLspHostImpl {
-    async fn get_subtree(
-        &self,
-        _cx: &roam_session::Context,
-        params: GetSubtreeParams,
-    ) -> Option<Value> {
+    async fn get_subtree(&self, params: GetSubtreeParams) -> Option<Value> {
         let uri = Url::parse(&params.document_uri).ok()?;
         let docs = self.documents.read().await;
         let doc = docs.get(&uri)?;
         let tree = doc.tree.as_ref()?;
 
-        // Navigate to the subtree at the given path
         let mut current = tree;
         for key in &params.path {
             let obj = current.as_object()?;
@@ -382,33 +377,21 @@ impl StyxLspHost for StyxLspHostImpl {
         Some(current.clone())
     }
 
-    async fn get_document(
-        &self,
-        _cx: &roam_session::Context,
-        params: GetDocumentParams,
-    ) -> Option<Value> {
+    async fn get_document(&self, params: GetDocumentParams) -> Option<Value> {
         let uri = Url::parse(&params.document_uri).ok()?;
         let docs = self.documents.read().await;
         let doc = docs.get(&uri)?;
         doc.tree.clone()
     }
 
-    async fn get_source(
-        &self,
-        _cx: &roam_session::Context,
-        params: GetSourceParams,
-    ) -> Option<String> {
+    async fn get_source(&self, params: GetSourceParams) -> Option<String> {
         let uri = Url::parse(&params.document_uri).ok()?;
         let docs = self.documents.read().await;
         let doc = docs.get(&uri)?;
         Some(doc.content.clone())
     }
 
-    async fn get_schema(
-        &self,
-        _cx: &roam_session::Context,
-        params: GetSchemaParams,
-    ) -> Option<SchemaInfo> {
+    async fn get_schema(&self, params: GetSchemaParams) -> Option<SchemaInfo> {
         let uri = Url::parse(&params.document_uri).ok()?;
         let docs = self.documents.read().await;
         let doc = docs.get(&uri)?;
@@ -423,7 +406,6 @@ impl StyxLspHost for StyxLspHostImpl {
 
     async fn offset_to_position(
         &self,
-        _cx: &roam_session::Context,
         params: OffsetToPositionParams,
     ) -> Option<styx_lsp_ext::Position> {
         let uri = Url::parse(&params.document_uri).ok()?;
@@ -443,11 +425,7 @@ impl StyxLspHost for StyxLspHostImpl {
         Some(styx_lsp_ext::Position { line, character })
     }
 
-    async fn position_to_offset(
-        &self,
-        _cx: &roam_session::Context,
-        params: PositionToOffsetParams,
-    ) -> Option<u32> {
+    async fn position_to_offset(&self, params: PositionToOffsetParams) -> Option<u32> {
         let uri = Url::parse(&params.document_uri).ok()?;
         let docs = self.documents.read().await;
         let doc = docs.get(&uri)?;

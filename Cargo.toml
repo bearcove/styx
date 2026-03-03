@@ -14,20 +14,22 @@ ariadne = "0.6"
 strip-ansi-escapes = "0.2"
 
 # Facet crates
-facet = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
-facet-core = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
-facet-format = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
-facet-reflect = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
-facet-testhelpers = { git = "https://github.com/facet-rs/facet", branch = "main", version = "0.43" }
+facet = { version = "0.44.0" }
+facet-core = { version = "0.44.0" }
+facet-format = { version = "0.44.0" }
+facet-reflect = { version = "0.44.0" }
+facet-testhelpers = { version = "0.44.0" }
+facet-json = { version = "0.44.0" }
+facet-postcard = { version = "0.44.0" }
 
 # CLI parsing
 figue = { git = "https://github.com/bearcove/figue", branch = "main" }
 
 # Roam RPC
-roam = { git = "https://github.com/bearcove/roam", branch = "main", version = "3" }
-roam-types = { git = "https://github.com/bearcove/roam", branch = "main", version = "3" }
-roam-core = { git = "https://github.com/bearcove/roam", branch = "main", version = "3" }
-roam-stream = { git = "https://github.com/bearcove/roam", branch = "main", version = "3" }
+roam = { git = "https://github.com/bearcove/roam", branch = "main", version = "7.0.0-alpha.1" }
+roam-types = { git = "https://github.com/bearcove/roam", branch = "main", version = "7.0.0-alpha.1" }
+roam-core = { git = "https://github.com/bearcove/roam", branch = "main", version = "7.0.0-alpha.1" }
+roam-stream = { git = "https://github.com/bearcove/roam", branch = "main", version = "7.0.0-alpha.1" }
 
 # Tracing
 tracing = "0.1"
@@ -61,8 +63,8 @@ opt-level = "s"
 inherits = "release"
 lto = "thin"
 
-# Uncomment to develop roam
-[patch."https://github.com/roam-rs/roam"]
+# Use local roam during v7 migration
+[patch."https://github.com/bearcove/roam"]
 roam = { path = "../roam/rust/roam" }
 roam-types = { path = "../roam/rust/roam-types" }
 roam-core = { path = "../roam/rust/roam-core" }
