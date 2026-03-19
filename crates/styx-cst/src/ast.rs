@@ -637,6 +637,33 @@ mod tests {
     }
 
     #[test]
+    fn test_three_segment_chained_tag_payload_is_nested_tags() {
+        let d = doc("value @a/@b/@c");
+        let entry = d.entries().next().unwrap();
+        let value = entry.value().unwrap();
+        let outer = Tag::cast(value.syntax().children().next().unwrap()).unwrap();
+        assert_eq!(outer.name(), Some("a".to_string()));
+
+        let middle = Tag::cast(outer.payload().unwrap()).unwrap();
+        assert_eq!(middle.name(), Some("b".to_string()));
+
+        let inner = Tag::cast(middle.payload().unwrap()).unwrap();
+        assert_eq!(inner.name(), Some("c".to_string()));
+        assert!(inner.payload().is_none(), "leaf tag should be unit");
+    }
+
+    #[test]
+    fn test_chained_tag_scalar_leaf_payload_is_scalar() {
+        let d = doc(r#"value @a/@b"foo""#);
+        let entry = d.entries().next().unwrap();
+        let value = entry.value().unwrap();
+        let outer = Tag::cast(value.syntax().children().next().unwrap()).unwrap();
+        let inner = Tag::cast(outer.payload().unwrap()).unwrap();
+        let payload = Scalar::cast(inner.payload().unwrap()).unwrap();
+        assert_eq!(payload.text_content(), "foo");
+    }
+
+    #[test]
     fn test_unit() {
         let d = doc("empty @");
         let entry = d.entries().next().unwrap();

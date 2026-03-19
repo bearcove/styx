@@ -1009,6 +1009,65 @@ mod tests {
     }
 
     #[test]
+    fn test_three_nested_newtype_variants_serialize_as_chained_tags() {
+        use crate::{from_str_expr, peek_to_string_expr};
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        enum Leaf {
+            Done,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        enum Middle {
+            Inner(Leaf),
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        enum Outer {
+            Wrapper(Middle),
+        }
+
+        let original = Outer::Wrapper(Middle::Inner(Leaf::Done));
+        let serialized = peek_to_string_expr(Peek::new(&original)).unwrap();
+        assert_eq!(serialized, "@wrapper/@inner/@done");
+
+        let parsed: Outer = from_str_expr(&serialized).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn test_nested_scalar_newtype_variants_serialize_as_chained_tags() {
+        use crate::{from_str_expr, peek_to_string_expr};
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        enum EventPattern {
+            Message(String),
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        enum EventAssertion {
+            MustEmit(EventPattern),
+        }
+
+        let original = EventAssertion::MustEmit(EventPattern::Message("hello world".into()));
+        let serialized = peek_to_string_expr(Peek::new(&original)).unwrap();
+        assert_eq!(serialized, r#"@must_emit/@message"hello world""#);
+
+        let parsed: EventAssertion = from_str_expr(&serialized).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
     fn test_roundtrip_with_vec() {
         use crate::from_str;
 

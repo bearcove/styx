@@ -673,6 +673,46 @@ mod tests {
     }
 
     #[test]
+    fn test_three_segment_chained_tag_token() {
+        assert_eq!(tokenize("@a/@b/@c"), vec![(TokenKind::Tag, "@a/@b/@c")]);
+    }
+
+    #[test]
+    fn test_chained_tag_token_with_quoted_leaf_payload() {
+        assert_eq!(
+            tokenize(r#"@a/@b"foo""#),
+            vec![
+                (TokenKind::Tag, "@a/@b"),
+                (TokenKind::QuotedScalar, r#""foo""#),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_chained_tag_token_with_raw_leaf_payload() {
+        assert_eq!(
+            tokenize(r##"@a/@br#"foo"#"##),
+            vec![
+                (TokenKind::Tag, "@a/@b"),
+                (TokenKind::RawScalar, r##"r#"foo"#"##),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_chained_tag_token_with_heredoc_leaf_payload() {
+        assert_eq!(
+            tokenize("@a/@b<<EOF\nhello\nEOF"),
+            vec![
+                (TokenKind::Tag, "@a/@b"),
+                (TokenKind::HeredocStart, "<<EOF\n"),
+                (TokenKind::HeredocContent, "hello\n"),
+                (TokenKind::HeredocEnd, "EOF"),
+            ]
+        );
+    }
+
+    #[test]
     fn test_quoted_scalar() {
         assert_eq!(
             tokenize(r#""hello world""#),

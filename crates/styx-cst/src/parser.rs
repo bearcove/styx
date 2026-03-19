@@ -701,6 +701,30 @@ id> value
     }
 
     #[test]
+    fn test_three_segment_chained_tag_roundtrip() {
+        let source = "value @a/@b/@c";
+        let parse = parse(source);
+        assert!(parse.is_ok(), "errors: {:?}", parse.errors());
+        assert_eq!(source, parse.syntax().to_string());
+    }
+
+    #[test]
+    fn test_chained_tag_with_scalar_leaf_roundtrip() {
+        let source = r#"value @a/@b"foo""#;
+        let parse = parse(source);
+        assert!(parse.is_ok(), "errors: {:?}", parse.errors());
+        assert_eq!(source, parse.syntax().to_string());
+    }
+
+    #[test]
+    fn test_chained_tag_with_heredoc_leaf_roundtrip() {
+        let source = "value @a/@b<<EOF\nhello\nEOF";
+        let parse = parse(source);
+        assert!(parse.is_ok(), "errors: {:?}", parse.errors());
+        assert_eq!(source, parse.syntax().to_string());
+    }
+
+    #[test]
     fn test_heredoc() {
         let source = "content <<EOF\nhello\nworld\nEOF";
         let parse = parse(source);

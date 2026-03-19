@@ -745,6 +745,113 @@ fn test_chained_tag_is_not_sequence_payload() {
 }
 
 #[test]
+fn test_three_segment_chained_tag_events() {
+    let source = "x @a/@b/@c";
+    let events = parse(source);
+    assert_events_eq!(
+        source,
+        events,
+        r#"
+        DocumentStart
+        ObjectStart
+        EntryStart
+        Key("x")
+        TagStart(@a)
+        TagStart(@b)
+        TagStart(@c)
+        TagEnd
+        TagEnd
+        TagEnd
+        EntryEnd
+        ObjectEnd
+        DocumentEnd
+        "#
+    );
+}
+
+#[test]
+fn test_chained_tag_with_quoted_leaf_payload_events() {
+    let source = r#"x @a/@b"foo""#;
+    let events = parse(source);
+    assert_events_eq!(
+        source,
+        events,
+        r#"
+        DocumentStart
+        ObjectStart
+        EntryStart
+        Key("x")
+        TagStart(@a)
+        TagStart(@b)
+        Scalar("foo", Quoted)
+        TagEnd
+        TagEnd
+        EntryEnd
+        ObjectEnd
+        DocumentEnd
+        "#
+    );
+}
+
+#[test]
+fn test_chained_tag_with_raw_leaf_payload_events() {
+    let source = r##"x @a/@br#"foo"#"##;
+    let events = parse(source);
+    assert_events_eq!(
+        source,
+        events,
+        r#"
+        DocumentStart
+        ObjectStart
+        EntryStart
+        Key("x")
+        TagStart(@a)
+        TagStart(@b)
+        Scalar("foo", Raw)
+        TagEnd
+        TagEnd
+        EntryEnd
+        ObjectEnd
+        DocumentEnd
+        "#
+    );
+}
+
+#[test]
+fn test_chained_tag_with_heredoc_leaf_payload_events() {
+    let source = "x @a/@b<<EOF\nhello\nEOF";
+    let events = parse(source);
+    assert_events_eq!(
+        source,
+        events,
+        r#"
+        DocumentStart
+        ObjectStart
+        EntryStart
+        Key("x")
+        TagStart(@a)
+        TagStart(@b)
+        Scalar("hello\n", Heredoc)
+        TagEnd
+        TagEnd
+        EntryEnd
+        ObjectEnd
+        DocumentEnd
+        "#
+    );
+}
+
+#[test]
+fn test_invalid_chained_tag_name_segment() {
+    assert_parse_errors(
+        r#"
+x @a/@1
+  ^^^^^ InvalidTagName
+"#,
+    );
+}
+
+#[test]
 fn test_tag_whitespace_gap() {
     let events = parse("x @tag\ny {a b}");
     let tag_events: Vec<_> = events

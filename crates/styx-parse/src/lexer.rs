@@ -646,6 +646,82 @@ mod tests {
     }
 
     #[test]
+    fn test_three_segment_chained_tag_lexeme() {
+        let lexemes = lex("@a/@b/@c");
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "a/@b/@c",
+                has_payload: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_chained_tag_with_quoted_leaf_payload() {
+        let lexemes = lex(r#"@a/@b"foo""#);
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "a/@b",
+                has_payload: true,
+                ..
+            }
+        ));
+        match &lexemes[1] {
+            Lexeme::Scalar {
+                value,
+                kind: ScalarKind::Quoted,
+                ..
+            } => assert_eq!(value.as_ref(), "foo"),
+            other => panic!("expected quoted scalar, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_chained_tag_with_raw_leaf_payload() {
+        let lexemes = lex(r##"@a/@br#"foo"#"##);
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "a/@b",
+                has_payload: true,
+                ..
+            }
+        ));
+        match &lexemes[1] {
+            Lexeme::Scalar {
+                value,
+                kind: ScalarKind::Raw,
+                ..
+            } => assert_eq!(value.as_ref(), "foo"),
+            other => panic!("expected raw scalar, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_chained_tag_with_heredoc_leaf_payload() {
+        let lexemes = lex("@a/@b<<EOF\nhello\nEOF");
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "a/@b",
+                has_payload: true,
+                ..
+            }
+        ));
+        match &lexemes[1] {
+            Lexeme::Scalar {
+                value,
+                kind: ScalarKind::Heredoc,
+                ..
+            } => assert_eq!(value.as_ref(), "hello\n"),
+            other => panic!("expected heredoc scalar, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_tag_with_unit_payload() {
         // @tag@ - tag with explicit unit payload
         let lexemes = lex("@tag@");

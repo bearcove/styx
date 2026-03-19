@@ -265,6 +265,67 @@ events (
     );
 }
 
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename_all = "snake_case")]
+#[repr(u8)]
+enum C {
+    Done,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename_all = "snake_case")]
+#[repr(u8)]
+enum B {
+    Inner(C),
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename_all = "snake_case")]
+#[repr(u8)]
+enum A {
+    Outer(B),
+}
+
+#[test]
+fn test_chained_tags_deserialize_three_nested_newtypes() {
+    let result: A = crate::from_str_expr("@outer/@inner/@done").unwrap();
+    assert_eq!(result, A::Outer(B::Inner(C::Done)));
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename_all = "snake_case")]
+#[repr(u8)]
+enum MessagePattern {
+    Message(String),
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename_all = "snake_case")]
+#[repr(u8)]
+enum MessageAssertion {
+    MustEmit(MessagePattern),
+}
+
+#[test]
+fn test_chained_tags_deserialize_scalar_leaf_newtype() {
+    let result: MessageAssertion =
+        crate::from_str_expr(r#"@must_emit/@message"hello world""#).unwrap();
+    assert_eq!(
+        result,
+        MessageAssertion::MustEmit(MessagePattern::Message("hello world".into()))
+    );
+}
+
+#[test]
+fn test_chained_tags_deserialize_heredoc_leaf_newtype() {
+    let result: MessageAssertion =
+        crate::from_str_expr("@must_emit/@message<<EOF\nhello\nworld\nEOF").unwrap();
+    assert_eq!(
+        result,
+        MessageAssertion::MustEmit(MessagePattern::Message("hello\nworld\n".into()))
+    );
+}
+
 // ============================================================================
 // Round-trip tests for #[facet(other)] variants (Issue #2004)
 // ============================================================================

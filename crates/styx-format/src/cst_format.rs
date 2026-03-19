@@ -797,6 +797,27 @@ age 30"#;
     }
 
     #[test]
+    fn test_three_segment_chained_tag_roundtrip() {
+        let input = "value @a/@b/@c";
+        let output = format(input);
+        assert_eq!(output.trim(), input);
+    }
+
+    #[test]
+    fn test_chained_tag_with_raw_leaf_roundtrip() {
+        let input = r##"value @a/@br#"foo"#"##;
+        let output = format(input);
+        assert_eq!(output.trim(), input);
+    }
+
+    #[test]
+    fn test_chained_tag_with_heredoc_leaf_roundtrip() {
+        let input = "value @a/@b<<EOF\nhello\nEOF";
+        let output = format(input);
+        assert_eq!(output.trim_end(), input);
+    }
+
+    #[test]
     fn test_sequence_with_multiple_scalars() {
         let input = "(a b c)";
         let output = format(input);
