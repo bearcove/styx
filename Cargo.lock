@@ -716,7 +716,7 @@ dependencies = [
 
 [[package]]
 name = "facet-styx"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "ariadne",
  "facet",
@@ -2083,7 +2083,7 @@ dependencies = [
 
 [[package]]
 name = "serde_styx"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "serde",
  "styx-format",
@@ -2200,7 +2200,7 @@ dependencies = [
 
 [[package]]
 name = "styx-cli"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "facet",
  "facet-styx",
@@ -2220,7 +2220,7 @@ dependencies = [
 
 [[package]]
 name = "styx-compat-tests"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "facet",
  "facet-styx",
@@ -2230,7 +2230,7 @@ dependencies = [
 
 [[package]]
 name = "styx-cst"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "rowan",
  "styx-testhelpers",
@@ -2239,7 +2239,7 @@ dependencies = [
 
 [[package]]
 name = "styx-embed"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "blake3",
  "goblin",
@@ -2250,7 +2250,7 @@ dependencies = [
 
 [[package]]
 name = "styx-embed-macros"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "blake3",
  "lz4_flex",
@@ -2261,7 +2261,7 @@ dependencies = [
 
 [[package]]
 name = "styx-ffi"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "cbindgen",
  "styx-tree",
@@ -2269,7 +2269,7 @@ dependencies = [
 
 [[package]]
 name = "styx-format"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "insta",
  "proptest",
@@ -2280,14 +2280,14 @@ dependencies = [
 
 [[package]]
 name = "styx-gen-go"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "facet-styx",
 ]
 
 [[package]]
 name = "styx-lsp"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "dirs",
  "eyre",
@@ -2317,7 +2317,7 @@ dependencies = [
 
 [[package]]
 name = "styx-lsp-ext"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "facet",
  "roam",
@@ -2326,14 +2326,14 @@ dependencies = [
 
 [[package]]
 name = "styx-lsp-test-schema"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "styx-parse"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "ariadne",
  "facet",
@@ -2346,14 +2346,14 @@ dependencies = [
 
 [[package]]
 name = "styx-testhelpers"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "ariadne",
 ]
 
 [[package]]
 name = "styx-tokenizer"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "facet",
  "facet-testhelpers",
@@ -2362,7 +2362,7 @@ dependencies = [
 
 [[package]]
 name = "styx-tree"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "ariadne",
  "facet",
@@ -2376,7 +2376,7 @@ dependencies = [
 
 [[package]]
 name = "styx-wasm"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "serde",
  "serde-wasm-bindgen",
@@ -2731,7 +2731,7 @@ checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
 
 [[package]]
 name = "tree-sitter-styx"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -3270,7 +3270,7 @@ checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 
 [[package]]
 name = "xtask"
-version = "2.0.0"
+version = "3.0.0"
 
 [[package]]
 name = "yansi"
