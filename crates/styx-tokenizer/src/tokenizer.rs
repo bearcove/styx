@@ -229,27 +229,39 @@ impl<'src> Tokenizer<'src> {
         // Check if followed by tag name start: [A-Za-z_]
         match self.peek() {
             Some(c) if c.is_ascii_alphabetic() || c == '_' => {
-                // Tag name: consume [A-Za-z0-9_-]*
-                // But stop before `r#` or `r"` which starts a raw string payload
-                self.advance();
-                while let Some(c) = self.peek() {
-                    // Check for raw string start: if current char is part of tag
-                    // and next would be `r` followed by `#` or `"`, stop here
-                    if c == 'r' && matches!(self.peek_nth(1), Some('#' | '"')) {
-                        // Don't consume `r` - it's the start of a raw string
-                        break;
-                    }
-                    if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                        self.advance();
-                    } else {
-                        break;
-                    }
+                self.consume_tag_segment();
+
+                // Chained tags: @outer/@inner/@leaf
+                while self.peek() == Some('/')
+                    && self.peek_nth(1) == Some('@')
+                    && matches!(self.peek_nth(2), Some(c) if c.is_ascii_alphabetic() || c == '_')
+                {
+                    self.advance(); // consume `/`
+                    self.advance(); // consume `@`
+                    self.consume_tag_segment();
                 }
                 self.token(TokenKind::Tag, start)
             }
             _ => {
                 // Standalone @ = unit
                 self.token(TokenKind::At, start)
+            }
+        }
+    }
+
+    /// Consume one tag name segment after the leading `@`.
+    fn consume_tag_segment(&mut self) {
+        // Tag name: consume [A-Za-z0-9_-]*
+        // But stop before `r#` or `r"` which starts a raw string payload.
+        self.advance();
+        while let Some(c) = self.peek() {
+            if c == 'r' && matches!(self.peek_nth(1), Some('#' | '"')) {
+                break;
+            }
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                self.advance();
+            } else {
+                break;
             }
         }
     }
@@ -634,6 +646,29 @@ mod tests {
         assert_eq!(
             tokenize("https://example.com/path"),
             vec![(TokenKind::BareScalar, "https://example.com/path")]
+        );
+    }
+
+    #[test]
+    fn test_chained_tag_token() {
+        assert_eq!(
+            tokenize("@must_emit/@discover_start"),
+            vec![(TokenKind::Tag, "@must_emit/@discover_start")]
+        );
+    }
+
+    #[test]
+    fn test_chained_tag_token_with_payload() {
+        assert_eq!(
+            tokenize("@must_emit/@discover_start{executor default}"),
+            vec![
+                (TokenKind::Tag, "@must_emit/@discover_start"),
+                (TokenKind::LBrace, "{"),
+                (TokenKind::BareScalar, "executor"),
+                (TokenKind::Whitespace, " "),
+                (TokenKind::BareScalar, "default"),
+                (TokenKind::RBrace, "}"),
+            ]
         );
     }
 

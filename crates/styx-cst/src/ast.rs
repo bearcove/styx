@@ -619,6 +619,24 @@ mod tests {
     }
 
     #[test]
+    fn test_chained_tag_payload_is_nested_tag() {
+        let d = doc("value @must_emit/@discover_start{executor default}");
+        let entry = d.entries().next().unwrap();
+        let value = entry.value().unwrap();
+        let outer_tag = Tag::cast(value.syntax().children().next().unwrap()).unwrap();
+
+        assert_eq!(outer_tag.name(), Some("must_emit".to_string()));
+
+        let inner = outer_tag.payload().unwrap();
+        let inner_tag = Tag::cast(inner).unwrap();
+        assert_eq!(inner_tag.name(), Some("discover_start".to_string()));
+        assert!(
+            inner_tag.payload().is_some(),
+            "inner tag should keep payload"
+        );
+    }
+
+    #[test]
     fn test_unit() {
         let d = doc("empty @");
         let entry = d.entries().next().unwrap();

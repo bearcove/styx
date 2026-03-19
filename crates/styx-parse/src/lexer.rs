@@ -189,6 +189,7 @@ impl<'src> Lexer<'src> {
                 // Tag token includes the @ and name, e.g. "@foo"
                 // Extract the name (skip the @)
                 let name = &tok.text[1..];
+                let is_chained = name.contains("/@");
 
                 // Check if payload follows immediately (no whitespace)
                 // Payload can be: { ( " r#" @ or Tag
@@ -219,7 +220,7 @@ impl<'src> Lexer<'src> {
                 Lexeme::Tag {
                     span: tok.span,
                     name,
-                    has_payload: is_adjacent && is_valid_payload,
+                    has_payload: is_chained || (is_adjacent && is_valid_payload),
                 }
             }
 
@@ -615,6 +616,33 @@ mod tests {
             }
         ));
         assert!(matches!(&lexemes[1], Lexeme::SeqStart { .. }));
+    }
+
+    #[test]
+    fn test_chained_tag_without_trailing_payload() {
+        let lexemes = lex("@must_emit/@discover_end");
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "must_emit/@discover_end",
+                has_payload: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_chained_tag_with_object_payload() {
+        let lexemes = lex("@must_emit/@discover_start{executor default}");
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "must_emit/@discover_start",
+                has_payload: true,
+                ..
+            }
+        ));
+        assert!(matches!(&lexemes[1], Lexeme::ObjectStart { .. }));
     }
 
     #[test]

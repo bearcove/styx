@@ -204,6 +204,67 @@ fn test_other_variant_nested() {
     );
 }
 
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename_all = "snake_case")]
+#[repr(u8)]
+enum EventPattern {
+    DiscoverStart { executor: String },
+    DiscoverEnd,
+    ExecStart,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename_all = "snake_case")]
+#[repr(u8)]
+enum EventAssertion {
+    MustEmit(EventPattern),
+    MustNotEmit(EventPattern),
+    Before {
+        first: EventPattern,
+        then: EventPattern,
+    },
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct EventDoc {
+    events: Vec<EventAssertion>,
+}
+
+#[test]
+fn test_chained_tags_deserialize_nested_newtypes() {
+    let input = r#"
+events (
+  @must_emit/@discover_start{executor default}
+  @must_emit/@discover_end
+  @must_not_emit/@exec_start
+  @before{
+    first @discover_start{executor default}
+    then @discover_end
+  }
+)
+"#;
+
+    let result: EventDoc = from_str(input).unwrap();
+    assert_eq!(
+        result,
+        EventDoc {
+            events: vec![
+                EventAssertion::MustEmit(EventPattern::DiscoverStart {
+                    executor: "default".into(),
+                }),
+                EventAssertion::MustEmit(EventPattern::DiscoverEnd),
+                EventAssertion::MustNotEmit(EventPattern::ExecStart),
+                EventAssertion::Before {
+                    first: EventPattern::DiscoverStart {
+                        executor: "default".into(),
+                    },
+                    then: EventPattern::DiscoverEnd,
+                },
+            ],
+        }
+    );
+}
+
 // ============================================================================
 // Round-trip tests for #[facet(other)] variants (Issue #2004)
 // ============================================================================
