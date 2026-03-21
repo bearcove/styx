@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.1](https://github.com/bearcove/styx/compare/styx-lsp-v3.0.0...styx-lsp-v3.0.1) - 2026-03-21
+
+### Other
+
+- Stop emitting semantic tokens for heredoc content
+
 ## [1.0.1](https://github.com/bearcove/styx/compare/styx-parse-v1.0.0...styx-parse-v1.0.1) - 2026-01-23
 
 ### Other
