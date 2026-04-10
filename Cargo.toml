@@ -16,7 +16,7 @@ strip-ansi-escapes = "0.2"
 # Facet crates
 facet = { version = "0.44" }
 facet-core = { version = "0.44" }
-facet-format = { version = "0.44" }
+facet-format = { version = "0.44.6" }
 facet-reflect = { version = "0.44" }
 facet-testhelpers = { version = "0.44" }
 facet-json = { version = "0.44" }
@@ -84,3 +84,4 @@ lto = "thin"
 # facet-solver = { path = "../facet/facet-solver" }
 # facet-json = { path = "../facet/facet-json" }
 # facet-testhelpers = { path = "../facet/facet-testhelpers" }
+
