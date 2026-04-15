@@ -14,22 +14,19 @@ ariadne = "0.6"
 strip-ansi-escapes = "0.2"
 
 # Facet crates
-facet = { version = "0.44" }
-facet-core = { version = "0.44" }
-facet-format = { version = "0.44.6" }
-facet-reflect = { version = "0.44" }
-facet-testhelpers = { version = "0.44" }
-facet-json = { version = "0.44" }
-facet-postcard = { version = "0.44" }
+facet = { version = "0.46" }
+facet-core = { version = "0.46" }
+facet-format = { version = "0.47" }
+facet-reflect = { version = "0.46" }
+facet-testhelpers = { version = "0.46" }
+facet-json = { version = "0.46" }
+facet-postcard = { version = "0.46" }
 
 # CLI parsing
-figue = { version = "2" }
+figue = { version = "2.0.3" }
 
-# Roam RPC
-roam = { version = "7" }
-roam-types = { version = "7" }
-roam-core = { version = "7" }
-roam-stream = { version = "7" }
+# Vox RPC
+vox = { version = "0.4" }
 
 # Tracing
 tracing = "0.1"
@@ -63,14 +60,7 @@ opt-level = "s"
 inherits = "release"
 lto = "thin"
 
-# # Use local roam during v7 migration
-# [patch."https://github.com/bearcove/roam"]
-# roam = { path = "../roam/rust/roam" }
-# roam-types = { path = "../roam/rust/roam-types" }
-# roam-core = { path = "../roam/rust/roam-core" }
-# roam-stream = { path = "../roam/rust/roam-stream" }
-
-# # Uncomment to develop facet
+# Uncomment to develop facet
 # [patch."https://github.com/facet-rs/facet"]
 # facet = { path = "../facet/facet" }
 # facet-core = { path = "../facet/facet-core" }
