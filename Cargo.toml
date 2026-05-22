@@ -26,7 +26,8 @@ facet-postcard = { version = "0.46" }
 figue = { version = "2.0.3" }
 
 # Vox RPC
-vox = { version = "0.4" }
+vox = { version = "0.8" }
+vox-stream = { version = "0.8" }
 
 # Tracing
 tracing = "0.1"
@@ -74,4 +75,3 @@ lto = "thin"
 # facet-solver = { path = "../facet/facet-solver" }
 # facet-json = { path = "../facet/facet-json" }
 # facet-testhelpers = { path = "../facet/facet-testhelpers" }
-
