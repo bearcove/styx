@@ -14,7 +14,7 @@ env:
 jobs:
   fmt:
     name: Rust / Format
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -37,7 +37,7 @@ jobs:
 
   clippy:
     name: Rust / Clippy
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -54,7 +54,7 @@ jobs:
 
   test:
     name: Rust / Test
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -72,7 +72,7 @@ jobs:
 
   compliance-rust:
     name: Compliance / Rust
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -96,7 +96,7 @@ jobs:
 
   compliance-js:
     name: Compliance / JavaScript
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     defaults:
       run:
         working-directory: implementations/styx-js
@@ -124,7 +124,7 @@ jobs:
 
   python-lint:
     name: Python / Lint
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     defaults:
       run:
         working-directory: implementations/styx-py
@@ -151,7 +151,7 @@ jobs:
 
   compliance-py:
     name: Compliance / Python
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     defaults:
       run:
         working-directory: implementations/styx-py
@@ -175,7 +175,7 @@ jobs:
 
   go-lint:
     name: Go / Lint
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     defaults:
       run:
         working-directory: implementations/styx-go
@@ -198,7 +198,7 @@ jobs:
 
   go-test:
     name: Go / Test
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -223,7 +223,7 @@ jobs:
 
   compliance-go:
     name: Compliance / Go
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     defaults:
       run:
         working-directory: implementations/styx-go
@@ -283,7 +283,7 @@ jobs:
 
   ffi-c:
     name: FFI / C
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -306,7 +306,7 @@ jobs:
 
   build-windows:
     name: Build / Windows
-    runs-on: depot-windows-2022-16
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v6
 
@@ -327,7 +327,7 @@ jobs:
 
   jetbrains-plugin:
     name: JetBrains / Build Plugin
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     defaults:
       run:
         working-directory: editors/jetbrains-styx
