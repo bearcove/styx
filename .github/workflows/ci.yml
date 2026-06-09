@@ -87,7 +87,7 @@ jobs:
 
       - name: Run compliance suite
         run: |
-          find compliance/corpus -name "*.styx" | sort | while read f; do
+          find compliance/corpus -name "*.styx" | sort | while read -r f; do
             ./target/release/styx tree --format sexp "$f"
           done > output.sexp
 
@@ -274,7 +274,7 @@ jobs:
 
       - name: Run compliance suite
         run: |
-          find ../../compliance/corpus -name "*.styx" | sort | while read f; do
+          find ../../compliance/corpus -name "*.styx" | sort | while read -r f; do
             .build/release/styx-compliance "$f"
           done > output.sexp
 
