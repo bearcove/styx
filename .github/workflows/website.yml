@@ -20,12 +20,12 @@ concurrency:
 
 jobs:
   build:
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10
 
@@ -53,10 +53,10 @@ jobs:
         run: cp CNAME docs/public/
 
       - name: Setup Pages
-        uses: actions/configure-pages@v4
+        uses: actions/configure-pages@v6
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: docs/public
 
@@ -64,9 +64,9 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: depot-ubuntu-24.04
+    runs-on: bearcove-ubuntu-24.04
     needs: build
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

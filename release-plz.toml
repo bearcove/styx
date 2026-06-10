@@ -10,12 +10,22 @@ git_release_enable = true
 
 # Core parsing and tree
 [[package]]
+name = "styx-tokenizer"
+version_group = "styx"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
 name = "styx-parse"
 version_group = "styx"
 changelog_path = "CHANGELOG.md"
 
 [[package]]
 name = "styx-tree"
+version_group = "styx"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "styx-testhelpers"
 version_group = "styx"
 changelog_path = "CHANGELOG.md"
 
@@ -54,6 +64,11 @@ changelog_path = "CHANGELOG.md"
 
 [[package]]
 name = "styx-embed-macros"
+version_group = "styx"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "styx-gen-go"
 version_group = "styx"
 changelog_path = "CHANGELOG.md"
 

@@ -14,7 +14,7 @@ env:
 jobs:
   fmt:
     name: Rust / Format
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -37,7 +37,7 @@ jobs:
 
   clippy:
     name: Rust / Clippy
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -54,7 +54,7 @@ jobs:
 
   test:
     name: Rust / Test
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -72,7 +72,7 @@ jobs:
 
   compliance-rust:
     name: Compliance / Rust
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -87,7 +87,7 @@ jobs:
 
       - name: Run compliance suite
         run: |
-          find compliance/corpus -name "*.styx" | sort | while read f; do
+          find compliance/corpus -name "*.styx" | sort | while read -r f; do
             ./target/release/styx tree --format sexp "$f"
           done > output.sexp
 
@@ -96,7 +96,7 @@ jobs:
 
   compliance-js:
     name: Compliance / JavaScript
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     defaults:
       run:
         working-directory: implementations/styx-js
@@ -104,9 +104,10 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '20'
+          package-manager-cache: false
           cache: 'npm'
           cache-dependency-path: implementations/styx-js/package-lock.json
 
@@ -124,7 +125,10 @@ jobs:
 
   python-lint:
     name: Python / Lint
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
+    env:
+      UV_CACHE_DIR: /tmp/uv-cache-${{ github.run_id }}-${{ github.job }}
+      UV_LINK_MODE: copy
     defaults:
       run:
         working-directory: implementations/styx-py
@@ -132,7 +136,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.1.0
 
       - name: Set up Python
         run: uv python install 3.12
@@ -151,7 +155,10 @@ jobs:
 
   compliance-py:
     name: Compliance / Python
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
+    env:
+      UV_CACHE_DIR: /tmp/uv-cache-${{ github.run_id }}-${{ github.job }}
+      UV_LINK_MODE: copy
     defaults:
       run:
         working-directory: implementations/styx-py
@@ -159,7 +166,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.1.0
 
       - name: Set up Python
         run: uv python install 3.12
@@ -175,7 +182,7 @@ jobs:
 
   go-lint:
     name: Go / Lint
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     defaults:
       run:
         working-directory: implementations/styx-go
@@ -183,7 +190,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.22'
           cache-dependency-path: implementations/styx-go/go.sum
@@ -193,17 +200,17 @@ jobs:
 
       - name: Run staticcheck
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
+          go install honnef.co/go/tools/cmd/staticcheck@v0.5.1
           staticcheck ./...
 
   go-test:
     name: Go / Test
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.22'
           cache-dependency-path: implementations/styx-go/go.sum
@@ -223,7 +230,7 @@ jobs:
 
   compliance-go:
     name: Compliance / Go
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     defaults:
       run:
         working-directory: implementations/styx-go
@@ -231,7 +238,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.22'
           cache-dependency-path: implementations/styx-go/go.sum
@@ -274,7 +281,7 @@ jobs:
 
       - name: Run compliance suite
         run: |
-          find ../../compliance/corpus -name "*.styx" | sort | while read f; do
+          find ../../compliance/corpus -name "*.styx" | sort | while read -r f; do
             .build/release/styx-compliance "$f"
           done > output.sexp
 
@@ -283,7 +290,7 @@ jobs:
 
   ffi-c:
     name: FFI / C
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -306,7 +313,7 @@ jobs:
 
   build-windows:
     name: Build / Windows
-    runs-on: depot-windows-2022-16
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v6
 
@@ -320,14 +327,14 @@ jobs:
         run: cargo build --release --bin styx
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: styx-windows-x86_64
           path: target/release/styx.exe
 
   jetbrains-plugin:
     name: JetBrains / Build Plugin
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: bearcove-ubuntu-24.04
     defaults:
       run:
         working-directory: editors/jetbrains-styx
@@ -335,22 +342,21 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Generate Gradle wrapper
-        run: gradle wrapper --gradle-version=8.13
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: '8.13'
 
       - name: Build plugin
-        run: ./gradlew buildPlugin
+        run: gradle buildPlugin
 
       - name: Upload plugin artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: jetbrains-styx-plugin
           path: editors/jetbrains-styx/build/distributions/*.zip
