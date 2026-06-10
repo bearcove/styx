@@ -126,6 +126,9 @@ jobs:
   python-lint:
     name: Python / Lint
     runs-on: bearcove-ubuntu-24.04
+    env:
+      UV_CACHE_DIR: /tmp/uv-cache-${{ github.run_id }}-${{ github.job }}
+      UV_LINK_MODE: copy
     defaults:
       run:
         working-directory: implementations/styx-py
@@ -153,6 +156,9 @@ jobs:
   compliance-py:
     name: Compliance / Python
     runs-on: bearcove-ubuntu-24.04
+    env:
+      UV_CACHE_DIR: /tmp/uv-cache-${{ github.run_id }}-${{ github.job }}
+      UV_LINK_MODE: copy
     defaults:
       run:
         working-directory: implementations/styx-py
@@ -194,7 +200,7 @@ jobs:
 
       - name: Run staticcheck
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
+          go install honnef.co/go/tools/cmd/staticcheck@v0.6.1
           staticcheck ./...
 
   go-test:
@@ -343,12 +349,11 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
-
-      - name: Generate Gradle wrapper
-        run: gradle wrapper --gradle-version=8.13
+        with:
+          gradle-version: '8.13'
 
       - name: Build plugin
-        run: ./gradlew buildPlugin
+        run: gradle buildPlugin
 
       - name: Upload plugin artifact
         uses: actions/upload-artifact@v7
