@@ -200,7 +200,7 @@ jobs:
 
       - name: Run staticcheck
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@v0.6.1
+          go install honnef.co/go/tools/cmd/staticcheck@v0.5.1
           staticcheck ./...
 
   go-test:
