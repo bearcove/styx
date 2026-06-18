@@ -1,3 +1,12 @@
+# Styx has moved
+
+Styx is now maintained in the Facet monorepo:
+
+https://github.com/facet-rs/facet
+
+The crates, docs, issues, pull requests, and releases for Styx now live there.
+This repository is kept as a historical archive.
+
 # facet-styx
 
 [![crates.io](https://img.shields.io/crates/v/facet-styx.svg)](https://crates.io/crates/facet-styx)
