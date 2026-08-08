@@ -23,7 +23,7 @@ facet-core = { git = "https://github.com/facet-rs/facet", rev = "5705fa6c51289be
 facet-format = { git = "https://github.com/facet-rs/facet", rev = "5705fa6c51289bea49f5729c52dc5e23cedce4f8" }
 facet-reflect = { git = "https://github.com/facet-rs/facet", rev = "5705fa6c51289bea49f5729c52dc5e23cedce4f8" }
 facet-testhelpers = { git = "https://github.com/facet-rs/facet", rev = "5705fa6c51289bea49f5729c52dc5e23cedce4f8" }
-figue = { git = "https://github.com/bearcove/figue-next", rev = "c7e1fda97267bafe83c4bbe30b74950a30cf8e5e" }
+figue = { git = "https://github.com/bearcove/figue-next", rev = "361672c57316b2202ac0372f1c64988d8acfc6b6" }
 futures = "0.3"
 glob = "0.3"
 goblin = "0.9"
@@ -49,8 +49,8 @@ tracing = { version = "0.1.43", default-features = false, features = ["std", "at
 tracing-subscriber = { version = "0.3.22", default-features = false, features = ["fmt", "std", "env-filter"] }
 tree-sitter = { package = "arborium-tree-sitter", version = "2.18.0" }
 unsynn = "0.3"
-vox = { git = "https://github.com/bearcove/vox-next", rev = "b18398810c404350e70c98527132e965ba878666" }
-vox-stream = { git = "https://github.com/bearcove/vox-next", rev = "b18398810c404350e70c98527132e965ba878666" }
+vox = { git = "https://github.com/bearcove/vox-next", rev = "e875e070d78690f45a06a13e8fc79cef84579ed4" }
+vox-stream = { git = "https://github.com/bearcove/vox-next", rev = "e875e070d78690f45a06a13e8fc79cef84579ed4" }
 wasm-bindgen = "0.2"
 which = "7"
 
