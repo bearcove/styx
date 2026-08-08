@@ -1,7 +1,8 @@
 [package]
 name = "styx-parse"
-version = "5.0.0-rc.0"
+version = "5.0.0-rc.5"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Event-based parser for the Styx configuration language"
 repository.workspace = true
@@ -23,6 +24,6 @@ styx-tokenizer = { workspace = true }
 [dev-dependencies]
 tracing.workspace = true
 facet-testhelpers.workspace = true
-styx-testhelpers = { path = "../styx-testhelpers" }
+styx-testhelpers.workspace = true
 similar.workspace = true
 ariadne.workspace = true

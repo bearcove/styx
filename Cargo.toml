@@ -4,74 +4,77 @@ members = ["crates/*"]
 exclude = ["editors/zed-styx", "tools/styx-webmd"]
 
 [workspace.package]
+version = "5.0.0-rc.5"
 edition = "2024"
+rust-version = "1.92"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/bearcove/styx"
+homepage = "https://github.com/bearcove/styx"
 
 [workspace.dependencies]
-# Error reporting
 ariadne = "0.6"
-strip-ansi-escapes = "0.2"
-
-# Facet crates
-facet = { version = "0.50.0-rc.0" }
-facet-core = { version = "0.50.0-rc.0" }
-facet-format = { version = "0.50.0-rc.0" }
-facet-reflect = { version = "0.50.0-rc.0" }
-facet-testhelpers = { version = "0.50.0-rc.0" }
-facet-json = { version = "0.50.0-rc.0" }
-facet-postcard = { version = "0.50.0-rc.0" }
-
-# CLI parsing
-figue = { version = "5.0.0-rc.0" }
-
-# Vox RPC
-vox = { version = "0.9.0-rc.0" }
-vox-stream = { version = "0.9.0-rc.0" }
-
-# Tracing
-tracing = "0.1"
-
-# Testing
-insta = "1"
+blake3 = { version = "1", default-features = false }
+cbindgen = "0.28"
+cc = "1.0.87"
+dirs = "6"
+eyre = "0.6"
+facet = { git = "https://github.com/facet-rs/facet", rev = "dc57e24e381f0c61b4acfa242c368656a84348d4" }
+facet-core = { git = "https://github.com/facet-rs/facet", rev = "dc57e24e381f0c61b4acfa242c368656a84348d4" }
+facet-format = { git = "https://github.com/facet-rs/facet", rev = "dc57e24e381f0c61b4acfa242c368656a84348d4" }
+facet-reflect = { git = "https://github.com/facet-rs/facet", rev = "dc57e24e381f0c61b4acfa242c368656a84348d4" }
+facet-testhelpers = { git = "https://github.com/facet-rs/facet", rev = "dc57e24e381f0c61b4acfa242c368656a84348d4" }
+figue = { git = "https://github.com/bearcove/figue-next", rev = "c7e1fda97267bafe83c4bbe30b74950a30cf8e5e" }
+futures = "0.3"
+glob = "0.3"
+goblin = "0.9"
+hex = "0.4"
+indexmap = { version = "2.12.1", default-features = false }
+insta = "1.44"
+lz4_flex = "0.11"
+margin = { git = "https://github.com/bearcove/snark", rev = "da157a34d268cde4153aa0abbcbfb5caa19cf58a" }
+margin-term = { git = "https://github.com/bearcove/snark", rev = "da157a34d268cde4153aa0abbcbfb5caa19cf58a" }
+memmap2 = "0.9"
+proc-macro2 = "1"
 proptest = "1"
+rowan = "0.16"
+serde = { version = "1.0.228", default-features = false, features = ["alloc", "derive"] }
+serde-wasm-bindgen = "0.6"
+serde_json = { version = "1.0.145", features = ["alloc"] }
+sha2 = "0.10"
 similar = "2"
+strip-ansi-escapes = "0.2"
+tokio = { version = "1", features = ["io-util", "rt", "rt-multi-thread"] }
+tower-lsp = "0.20"
+tracing = { version = "0.1.43", default-features = false, features = ["std", "attributes"] }
+tracing-subscriber = { version = "0.3.22", default-features = false, features = ["fmt", "std", "env-filter"] }
+tree-sitter = { package = "arborium-tree-sitter", version = "2.18.0" }
+unsynn = "0.3"
+vox = { git = "https://github.com/bearcove/vox-next", rev = "b18398810c404350e70c98527132e965ba878666" }
+vox-stream = { git = "https://github.com/bearcove/vox-next", rev = "b18398810c404350e70c98527132e965ba878666" }
+wasm-bindgen = "0.2"
+which = "7"
 
-# Serialization
-serde_json = "1"
+facet-styx = { path = "crates/facet-styx", version = "5.0.0-rc.5" }
+serde_styx = { path = "crates/serde_styx", version = "5.0.0-rc.5" }
+styx-cli = { path = "crates/styx-cli", version = "5.0.0-rc.5" }
+styx-cst = { path = "crates/styx-cst", version = "5.0.0-rc.5" }
+styx-embed = { path = "crates/styx-embed", version = "5.0.0-rc.5" }
+styx-embed-macros = { path = "crates/styx-embed-macros", version = "5.0.0-rc.5" }
+styx-format = { path = "crates/styx-format", version = "5.0.0-rc.5" }
+styx-gen-go = { path = "crates/styx-gen-go", version = "5.0.0-rc.5" }
+styx-lsp = { path = "crates/styx-lsp", version = "5.0.0-rc.5" }
+styx-lsp-ext = { path = "crates/styx-lsp-ext", version = "5.0.0-rc.5" }
+styx-lsp-test-schema = { path = "crates/styx-lsp-test-schema", version = "5.0.0-rc.5" }
+styx-parse = { path = "crates/styx-parse", version = "5.0.0-rc.5" }
+styx-testhelpers = { path = "crates/styx-testhelpers", version = "5.0.0-rc.5" }
+styx-tokenizer = { path = "crates/styx-tokenizer", version = "5.0.0-rc.5" }
+styx-tree = { path = "crates/styx-tree", version = "5.0.0-rc.5" }
 
-# Internal crates
-styx-tokenizer = { path = "crates/styx-tokenizer", version = "5.0.0-rc.0" }
-styx-parse = { path = "crates/styx-parse", version = "5.0.0-rc.0" }
-styx-format = { path = "crates/styx-format", version = "5.0.0-rc.0" }
-styx-tree = { path = "crates/styx-tree", version = "5.0.0-rc.0" }
-styx-cst = { path = "crates/styx-cst", version = "5.0.0-rc.0" }
-styx-lsp = { path = "crates/styx-lsp", version = "5.0.0-rc.0" }
-styx-embed = { path = "crates/styx-embed", version = "5.0.0-rc.0" }
-styx-gen-go = { path = "crates/styx-gen-go", version = "5.0.0-rc.0" }
-facet-styx = { path = "crates/facet-styx", version = "5.0.0-rc.0" }
-styx-testhelpers = { path = "crates/styx-testhelpers", version = "5.0.0-rc.0" }
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(facet_no_doc)", "cfg(kani)"] }
 
-# Optimize WASM builds for size
+[workspace.lints.clippy]
+disallowed_methods = "deny"
+
 [profile.release.package.styx-wasm]
 opt-level = "s"
-
-# The profile that 'dist' will build with
-[profile.dist]
-inherits = "release"
-lto = "thin"
-
-# Uncomment to develop facet
-# [patch."https://github.com/facet-rs/facet"]
-# facet = { path = "../facet/facet" }
-# facet-core = { path = "../facet/facet-core" }
-# facet-reflect = { path = "../facet/facet-reflect" }
-# facet-format = { path = "../facet/facet-format" }
-# facet-path = { path = "../facet/facet-path" }
-# facet-postcard = { path = "../facet/facet-postcard" }
-# facet-pretty = { path = "../facet/facet-pretty" }
-# facet-value = { path = "../facet/facet-value" }
-# facet-dessert = { path = "../facet/facet-dessert" }
-# facet-solver = { path = "../facet/facet-solver" }
-# facet-json = { path = "../facet/facet-json" }
-# facet-testhelpers = { path = "../facet/facet-testhelpers" }

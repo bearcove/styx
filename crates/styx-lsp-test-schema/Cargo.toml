@@ -1,7 +1,8 @@
 [package]
 name = "styx-lsp-test-schema"
-version = "5.0.0-rc.0"
+version = "5.0.0-rc.5"
 edition.workspace = true
+rust-version.workspace = true
 description = "Schema types for LSP extension test files"
 license.workspace = true
 repository.workspace = true

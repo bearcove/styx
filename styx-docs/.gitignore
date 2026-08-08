@@ -1,0 +1,7 @@
+public/
+.sass-cache/
+.dodeca.db/
+.cache/
+node_modules/
+static/dist/
+dist

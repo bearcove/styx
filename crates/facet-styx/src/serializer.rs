@@ -12,6 +12,8 @@ use styx_format::{FormatOptions, StyxWriter};
 
 // Re-export FormatOptions as SerializeOptions for backwards compatibility
 pub use styx_format::FormatOptions as SerializeOptions;
+// Re-export the text reformatter so callers can pretty-print serialized styx.
+pub use styx_format::format_source;
 
 /// Extract a FieldKey from a Peek value (typically a map key).
 ///
@@ -186,6 +188,9 @@ impl std::error::Error for StyxSerializeError {}
 /// Styx serializer with configurable formatting options.
 pub struct StyxSerializer {
     writer: StyxWriter,
+    /// Serialization options (also held by the writer); kept here for value-level
+    /// decisions like `omit_none`.
+    options: FormatOptions,
     /// Track if we're at root level (for struct unwrapping)
     at_root: bool,
     /// Track if we just wrote a variant tag (to skip None payload)
@@ -201,7 +206,8 @@ impl StyxSerializer {
     /// Create a new Styx serializer with the given options.
     pub fn with_options(options: FormatOptions) -> Self {
         Self {
-            writer: StyxWriter::with_options(options),
+            writer: StyxWriter::with_options(options.clone()),
+            options,
             at_root: true,
             just_wrote_tag: false,
         }
@@ -222,13 +228,28 @@ impl Default for StyxSerializer {
 impl FormatSerializer for StyxSerializer {
     type Error = StyxSerializeError;
 
+    fn should_omit_field(&self, _field: &facet_reflect::FieldItem, value: Peek<'_, '_>) -> bool {
+        // With `omit_none`, drop absent options instead of writing them as `@`
+        // (which is noise and doesn't round-trip for map/seq fields).
+        self.options.omit_none
+            && value
+                .innermost_peek()
+                .into_option()
+                .is_ok_and(|opt| opt.is_none())
+    }
+
     fn begin_struct(&mut self) -> Result<(), Self::Error> {
+        let is_after_tag = self.just_wrote_tag;
         let is_root = self.at_root;
-        trace!(is_root, "begin_struct");
+        trace!(is_root, is_after_tag, "begin_struct");
         self.at_root = false;
         self.just_wrote_tag = false;
-        self.writer.clear_skip_before_value();
-        self.writer.begin_struct(is_root);
+        if is_after_tag {
+            self.writer.begin_struct_after_tag(false);
+        } else {
+            self.writer.clear_skip_before_value();
+            self.writer.begin_struct(is_root);
+        }
         Ok(())
     }
 
@@ -322,11 +343,16 @@ impl FormatSerializer for StyxSerializer {
     }
 
     fn begin_seq(&mut self) -> Result<(), Self::Error> {
-        trace!("begin_seq");
+        let is_after_tag = self.just_wrote_tag;
+        trace!(is_after_tag, "begin_seq");
         self.at_root = false;
         self.just_wrote_tag = false;
-        self.writer.clear_skip_before_value();
-        self.writer.begin_seq();
+        if is_after_tag {
+            self.writer.begin_seq_after_tag();
+        } else {
+            self.writer.clear_skip_before_value();
+            self.writer.begin_seq();
+        }
         Ok(())
     }
 
@@ -584,6 +610,47 @@ where
     Ok(String::from_utf8(bytes).expect("Styx output should always be valid UTF-8"))
 }
 
+/// Serialize a value to a pretty-printed Styx string (respects line length limits).
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_styx::to_string_pretty;
+///
+/// #[derive(Facet)]
+/// struct Config {
+///     server: Server,
+///     retries: u32,
+/// }
+///
+/// #[derive(Facet)]
+/// struct Server {
+///     host: String,
+///     port: u16,
+///     timeout: u32,
+/// }
+///
+/// let config = Config {
+///     server: Server {
+///         host: "localhost".to_string(),
+///         port: 8080,
+///         timeout: 30,
+///     },
+///     retries: 3,
+/// };
+/// let pretty_styx = to_string_pretty(&config).unwrap();
+/// assert!(pretty_styx.contains("server {"));
+/// assert!(pretty_styx.contains("retries 3"));
+/// ```
+pub fn to_string_pretty<'facet, T>(value: &T) -> Result<String, SerializeError<StyxSerializeError>>
+where
+    T: Facet<'facet> + ?Sized,
+{
+    let options = FormatOptions::default().pretty(80);
+    to_string_with_options(value, &options)
+}
+
 /// Serialize a value to a Styx string with custom options.
 pub fn to_string_with_options<'facet, T>(
     value: &T,
@@ -596,6 +663,17 @@ where
     serialize_root(&mut serializer, Peek::new(value))?;
     let bytes = serializer.finish();
     Ok(String::from_utf8(bytes).expect("Styx output should always be valid UTF-8"))
+}
+
+/// Serialize a value to a pretty-printed Styx string (respects line length limits).
+///
+/// This is a convenience wrapper around `peek_to_string_with_options` that enables
+/// pretty printing with the default line length of 80 characters.
+pub fn peek_to_string_pretty<'input, 'facet>(
+    peek: Peek<'input, 'facet>,
+) -> Result<String, SerializeError<StyxSerializeError>> {
+    let options = FormatOptions::default().pretty(80);
+    peek_to_string_with_options(peek, &options)
 }
 
 /// Serialize a `Peek` instance to a Styx string.
@@ -658,10 +736,15 @@ impl FormatSerializer for CompactStyxSerializer {
     type Error = StyxSerializeError;
 
     fn begin_struct(&mut self) -> Result<(), Self::Error> {
+        let is_after_tag = self.just_wrote_tag;
         // Never treat as root in compact mode
         self.just_wrote_tag = false;
-        self.writer.clear_skip_before_value();
-        self.writer.begin_struct(false);
+        if is_after_tag {
+            self.writer.begin_struct_after_tag(false);
+        } else {
+            self.writer.clear_skip_before_value();
+            self.writer.begin_struct(false);
+        }
         Ok(())
     }
 
@@ -676,9 +759,14 @@ impl FormatSerializer for CompactStyxSerializer {
     }
 
     fn begin_seq(&mut self) -> Result<(), Self::Error> {
+        let is_after_tag = self.just_wrote_tag;
         self.just_wrote_tag = false;
-        self.writer.clear_skip_before_value();
-        self.writer.begin_seq();
+        if is_after_tag {
+            self.writer.begin_seq_after_tag();
+        } else {
+            self.writer.clear_skip_before_value();
+            self.writer.begin_seq();
+        }
         Ok(())
     }
 
@@ -866,6 +954,30 @@ mod tests {
         };
         let result = to_string(&value).unwrap();
         assert!(result.contains("required hello"));
+        assert!(result.contains("optional 42"));
+    }
+
+    #[test]
+    fn test_omit_none() {
+        let value = WithOptional {
+            required: "hello".into(),
+            optional: None,
+        };
+        let opts = SerializeOptions::default().omit_none();
+        let result = to_string_with_options(&value, &opts).unwrap();
+        assert!(result.contains("required hello"));
+        // With omit_none, the absent option is dropped entirely (no `optional @`).
+        assert!(!result.contains("optional"));
+    }
+
+    #[test]
+    fn test_omit_none_keeps_some() {
+        let value = WithOptional {
+            required: "hello".into(),
+            optional: Some(42),
+        };
+        let opts = SerializeOptions::default().omit_none();
+        let result = to_string_with_options(&value, &opts).unwrap();
         assert!(result.contains("optional 42"));
     }
 
