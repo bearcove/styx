@@ -49,8 +49,8 @@ tracing = { version = "0.1.43", default-features = false, features = ["std", "at
 tracing-subscriber = { version = "0.3.22", default-features = false, features = ["fmt", "std", "env-filter"] }
 tree-sitter = { package = "arborium-tree-sitter", version = "2.18.0" }
 unsynn = "0.3"
-vox = { git = "https://github.com/bearcove/vox-next", rev = "b18398810c404350e70c98527132e965ba878666" }
-vox-stream = { git = "https://github.com/bearcove/vox-next", rev = "b18398810c404350e70c98527132e965ba878666" }
+vox = { git = "https://github.com/bearcove/vox-next", branch = "deps/align-weavy-for-styx" }
+vox-stream = { git = "https://github.com/bearcove/vox-next", branch = "deps/align-weavy-for-styx" }
 wasm-bindgen = "0.2"
 which = "7"
 
