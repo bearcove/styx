@@ -23,7 +23,7 @@ facet-core = { git = "https://github.com/facet-rs/facet", branch = "deps/align-w
 facet-format = { git = "https://github.com/facet-rs/facet", branch = "deps/align-weavy-for-dibs" }
 facet-reflect = { git = "https://github.com/facet-rs/facet", branch = "deps/align-weavy-for-dibs" }
 facet-testhelpers = { git = "https://github.com/facet-rs/facet", branch = "deps/align-weavy-for-dibs" }
-figue = { git = "https://github.com/bearcove/figue-next", rev = "c7e1fda97267bafe83c4bbe30b74950a30cf8e5e" }
+figue = { git = "https://github.com/bearcove/figue-next", branch = "deps/align-facet-for-dibs" }
 futures = "0.3"
 glob = "0.3"
 goblin = "0.9"
