@@ -18,11 +18,11 @@ cbindgen = "0.28"
 cc = "1.0.87"
 dirs = "6"
 eyre = "0.6"
-facet = { git = "https://github.com/facet-rs/facet", rev = "5705fa6c51289bea49f5729c52dc5e23cedce4f8" }
-facet-core = { git = "https://github.com/facet-rs/facet", rev = "5705fa6c51289bea49f5729c52dc5e23cedce4f8" }
-facet-format = { git = "https://github.com/facet-rs/facet", rev = "5705fa6c51289bea49f5729c52dc5e23cedce4f8" }
-facet-reflect = { git = "https://github.com/facet-rs/facet", rev = "5705fa6c51289bea49f5729c52dc5e23cedce4f8" }
-facet-testhelpers = { git = "https://github.com/facet-rs/facet", rev = "5705fa6c51289bea49f5729c52dc5e23cedce4f8" }
+facet = { git = "https://github.com/facet-rs/facet", branch = "deps/align-weavy-for-dibs" }
+facet-core = { git = "https://github.com/facet-rs/facet", branch = "deps/align-weavy-for-dibs" }
+facet-format = { git = "https://github.com/facet-rs/facet", branch = "deps/align-weavy-for-dibs" }
+facet-reflect = { git = "https://github.com/facet-rs/facet", branch = "deps/align-weavy-for-dibs" }
+facet-testhelpers = { git = "https://github.com/facet-rs/facet", branch = "deps/align-weavy-for-dibs" }
 figue = { git = "https://github.com/bearcove/figue-next", rev = "c7e1fda97267bafe83c4bbe30b74950a30cf8e5e" }
 futures = "0.3"
 glob = "0.3"
@@ -31,8 +31,8 @@ hex = "0.4"
 indexmap = { version = "2.12.1", default-features = false }
 insta = "1.44"
 lz4_flex = "0.11"
-margin = { git = "https://github.com/bearcove/snark", rev = "2dcfc039aa43e14fa004238d00bd9eeb16bf859a" }
-margin-term = { git = "https://github.com/bearcove/snark", rev = "2dcfc039aa43e14fa004238d00bd9eeb16bf859a" }
+margin = { git = "https://github.com/bearcove/snark", branch = "deps/full-weavy-pin-for-dibs" }
+margin-term = { git = "https://github.com/bearcove/snark", branch = "deps/full-weavy-pin-for-dibs" }
 memmap2 = "0.9"
 proc-macro2 = "1"
 proptest = "1"

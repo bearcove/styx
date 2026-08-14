@@ -26,5 +26,5 @@ facet-testhelpers.workspace = true
 insta.workspace = true
 strip-ansi-escapes.workspace = true
 facet.workspace = true
-facet-json = { git = "https://github.com/facet-rs/facet", rev = "5705fa6c51289bea49f5729c52dc5e23cedce4f8" }
-facet-postcard = { git = "https://github.com/facet-rs/facet", rev = "5705fa6c51289bea49f5729c52dc5e23cedce4f8" }
+facet-json = { git = "https://github.com/facet-rs/facet", branch = "deps/align-weavy-for-dibs" }
+facet-postcard = { git = "https://github.com/facet-rs/facet", branch = "deps/align-weavy-for-dibs" }
