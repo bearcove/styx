@@ -41,16 +41,16 @@ similar = "2"
 serde_json = "1"
 
 # Internal crates
-styx-tokenizer = { path = "crates/styx-tokenizer", version = "5.0.0-rc.0" }
-styx-parse = { path = "crates/styx-parse", version = "5.0.0-rc.0" }
-styx-format = { path = "crates/styx-format", version = "5.0.0-rc.0" }
-styx-tree = { path = "crates/styx-tree", version = "5.0.0-rc.0" }
-styx-cst = { path = "crates/styx-cst", version = "5.0.0-rc.0" }
-styx-lsp = { path = "crates/styx-lsp", version = "5.0.0-rc.0" }
-styx-embed = { path = "crates/styx-embed", version = "5.0.0-rc.0" }
-styx-gen-go = { path = "crates/styx-gen-go", version = "5.0.0-rc.0" }
-facet-styx = { path = "crates/facet-styx", version = "5.0.0-rc.0" }
-styx-testhelpers = { path = "crates/styx-testhelpers", version = "5.0.0-rc.0" }
+styx-tokenizer = { path = "crates/styx-tokenizer", version = "5.0.0-rc.1" }
+styx-parse = { path = "crates/styx-parse", version = "5.0.0-rc.1" }
+styx-format = { path = "crates/styx-format", version = "5.0.0-rc.1" }
+styx-tree = { path = "crates/styx-tree", version = "5.0.0-rc.1" }
+styx-cst = { path = "crates/styx-cst", version = "5.0.0-rc.1" }
+styx-lsp = { path = "crates/styx-lsp", version = "5.0.0-rc.1" }
+styx-embed = { path = "crates/styx-embed", version = "5.0.0-rc.1" }
+styx-gen-go = { path = "crates/styx-gen-go", version = "5.0.0-rc.1" }
+facet-styx = { path = "crates/facet-styx", version = "5.0.0-rc.1" }
+styx-testhelpers = { path = "crates/styx-testhelpers", version = "5.0.0-rc.1" }
 
 # Optimize WASM builds for size
 [profile.release.package.styx-wasm]
