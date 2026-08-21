@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0-rc.3](https://github.com/bearcove/styx/compare/styx-tokenizer-v5.0.0-rc.2...styx-tokenizer-v5.0.0-rc.3) - 2026-08-21
+
+### Other
+
+- release v5.0.0-rc.2 ([#73](https://github.com/bearcove/styx/pull/73))
+- release v5.0.0-rc.0
+- Prepare Styx 5.0.0-rc.0 ([#69](https://github.com/bearcove/styx/pull/69))
+- Bump Styx packages to 4.0.0
+- release ([#65](https://github.com/bearcove/styx/pull/65))
+- styx v3.0.0
+- Add chained tag syntax for nested tag payloads ([#62](https://github.com/bearcove/styx/pull/62))
+- v2.0.0
+- Add roundtrip tests to metadata tests, fix serialization bugs ([#49](https://github.com/bearcove/styx/pull/49))
+- *(styx-parse)* Complete parser rewrite with cross-language compliance ([#44](https://github.com/bearcove/styx/pull/44))
+
 ## [5.0.0-rc.2](https://github.com/bearcove/styx/compare/styx-tokenizer-v5.0.0-rc.1...styx-tokenizer-v5.0.0-rc.2) - 2026-08-21
 
 ### Other
